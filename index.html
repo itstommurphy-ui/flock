@@ -1,7 +1,697 @@
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>FLOCK</title></head>
-<body style="background:#111;color:#8f8;font-family:monospace;text-align:center;padding-top:20vh">
-<h1>FLOCK</h1><p>project scaffolded</p>
+<head>
+<meta charset="utf-8">
+<title>FLOCK</title>
+<style>
+  html, body { margin:0; padding:0; background:#0f1410; height:100%; overflow:hidden;
+    display:flex; align-items:center; justify-content:center; }
+  canvas { background:#0f1410; max-width:100vw; max-height:100vh; image-rendering:pixelated; cursor:crosshair; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1000" height="600"></canvas>
+
+<script>
+// ============================================================
+// FLOCK — v1 skeleton
+// Everything is a coloured rectangle until art lands. Drop correctly
+// named PNGs into assets/ and they replace placeholders automatically,
+// no code changes. See DESIGN.md section 8 for the list and sizes.
+//
+// CONTROLS (all live at once, no toggle needed):
+//   WASD / arrow keys / gamepad left stick / hold RIGHT MOUSE  = move
+//   SPACE / LEFT MOUSE / gamepad A                             = swing
+//   same button while stood at the gate                        = open/shut
+// ============================================================
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const VW = canvas.width, VH = canvas.height;
+ctx.imageSmoothingEnabled = false;
+
+const WORLD_W = 2400, WORLD_H = 1600, TILE = 64;
+
+// ---------------- ASSETS ----------------
+const strips = {};
+function loadStrip(name, file, frames, fw, fh) {
+  const img = new Image();
+  img.onload = () => { strips[name] = { img, fw, fh, frames }; };
+  img.onerror = () => {};
+  img.src = file;
+}
+const images = {};
+function loadImage(name, file) {
+  const img = new Image();
+  img.onload = () => { images[name] = img; };
+  img.onerror = () => {};
+  img.src = file;
+}
+const S = "assets/sprites/", Wd = "assets/world/", A = "assets/audio/";
+["down","up","side"].forEach(d => {
+  loadStrip("farmer-idle-"+d, S+"farmer-idle-"+d+".png", 2, 48, 48);
+  loadStrip("farmer-walk-"+d, S+"farmer-walk-"+d+".png", 4, 48, 48);
+  loadStrip("sheep-idle-"+d,  S+"sheep-idle-"+d+".png",  2, 40, 40);
+  loadStrip("sheep-walk-"+d,  S+"sheep-walk-"+d+".png",  4, 40, 40);
+  loadStrip("wolf-walk-"+d,   S+"wolf-walk-"+d+".png",   4, 48, 48);
+});
+loadStrip("sheep-graze", S+"sheep-graze.png", 3, 40, 40);
+loadStrip("wolf-death",  S+"wolf-death.png",  4, 48, 48);
+loadImage("grass", Wd+"grass-tile.png");
+loadImage("trunk", Wd+"tree-trunk.png");
+loadImage("canopy", Wd+"tree-canopy.png");
+loadImage("fenceH", Wd+"fence-h.png");
+loadImage("fenceV", Wd+"fence-v.png");
+loadImage("gateOpen", Wd+"gate-open.png");
+loadImage("gateClosed", Wd+"gate-closed.png");
+
+// ---------------- AUDIO ----------------
+// The bleat needs distance volume AND stereo pan, so it goes through
+// Web Audio rather than plain <audio> elements.
+let audioCtx = null;
+function ac() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+const buffers = {};
+function loadSound(name, file) {
+  fetch(file).then(r => { if (!r.ok) throw 0; return r.arrayBuffer(); })
+    .then(b => ac().decodeAudioData(b))
+    .then(b => { buffers[name] = b; }).catch(() => {});
+}
+["sfx-bleat-1","sfx-bleat-2","sfx-bleat-3","sfx-punch","sfx-hit",
+ "sfx-wolf-growl","sfx-wolf-die","sfx-fence-hit","sfx-gate","sfx-wave-start"
+].forEach(n => loadSound(n, A + n + ".wav"));
+
+function playAt(name, x, y, baseVol) {
+  const c = ac();
+  if (c.state === "suspended") c.resume();
+  const dx = x - player.x, dy = y - player.y;
+  const d = Math.hypot(dx, dy);
+  const vol = Math.max(0, 1 - d / 900) * (baseVol || 1);
+  if (vol <= 0.01) return;
+  const g = c.createGain(); g.gain.value = vol;
+  let out = g;
+  if (c.createStereoPanner) {
+    const p = c.createStereoPanner();
+    p.pan.value = clamp(dx / 500, -1, 1);
+    g.connect(p); out = p;
+  }
+  out.connect(c.destination);
+  if (buffers[name]) {
+    const src = c.createBufferSource();
+    src.buffer = buffers[name]; src.connect(g); src.start();
+  } else placeholderTone(name, g);
+}
+function placeholderTone(name, dest) {
+  const c = ac(), t = c.currentTime;
+  const tone = (f1, f2, dur, type) => {
+    const o = c.createOscillator(), e = c.createGain();
+    o.type = type || "square";
+    o.frequency.setValueAtTime(f1, t);
+    o.frequency.linearRampToValueAtTime(f2, t + dur);
+    e.gain.setValueAtTime(0.25, t);
+    e.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(e).connect(dest); o.start(t); o.stop(t + dur);
+  };
+  if (name.startsWith("sfx-bleat")) tone(520, 380, 0.35, "sawtooth");
+  else if (name === "sfx-punch") tone(180, 90, 0.08);
+  else if (name === "sfx-hit") tone(300, 120, 0.09);
+  else if (name === "sfx-wolf-growl") tone(120, 80, 0.3, "sawtooth");
+  else if (name === "sfx-wolf-die") tone(260, 60, 0.3, "sawtooth");
+  else if (name === "sfx-fence-hit") tone(220, 150, 0.1);
+  else if (name === "sfx-gate") tone(400, 500, 0.1);
+  else if (name === "sfx-wave-start") tone(300, 600, 0.4);
+}
+
+// ---------------- HELPERS ----------------
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function rnd(a, b) { return a + Math.random() * (b - a); }
+
+// ---------------- THE PEN ----------------
+const PEN = { x: 1040, y: 660, w: 320, h: 256 };
+const SEG = 32, FENCE_HP = 3;
+let fence = [], gateClosed = true;
+
+function buildPen() {
+  fence = [];
+  const add = (x,y,w,h,v,g) => fence.push({ x,y,w,h, hp:FENCE_HP, vertical:!!v, gate:!!g });
+  const mid = PEN.x + PEN.w/2;
+  for (let x = PEN.x; x < PEN.x + PEN.w; x += SEG) {
+    add(x, PEN.y - 8, SEG, 16, false, false);
+    add(x, PEN.y + PEN.h - 8, SEG, 16, false, x >= mid - SEG && x < mid + SEG);
+  }
+  for (let y = PEN.y; y < PEN.y + PEN.h; y += SEG) {
+    add(PEN.x - 8, y, 16, SEG, true, false);
+    add(PEN.x + PEN.w - 8, y, 16, SEG, true, false);
+  }
+}
+function penHoles() { return fence.filter(f => !f.gate && f.hp <= 0).length; }
+function inPen(e) { return e.x > PEN.x && e.x < PEN.x+PEN.w && e.y > PEN.y && e.y < PEN.y+PEN.h; }
+function gateRect() {
+  const g = fence.filter(f => f.gate);
+  if (!g.length) return null;
+  const x1 = Math.min(...g.map(f=>f.x)), x2 = Math.max(...g.map(f=>f.x+f.w));
+  return { x:x1, y:g[0].y, w:x2-x1, h:g[0].h };
+}
+function segSolid(f) { return f.gate ? gateClosed : f.hp > 0; }
+
+// ---------------- STATE ----------------
+let player, sheep, wolves = [], trees = [], props = [];
+let wave = 0, waveState = "idle", waveTimer = 0, state = "play";
+let alert = null, frame = 0, camX = 0, camY = 0, shake = 0, bleatCue = null;
+
+function newRun() {
+  buildPen(); gateClosed = true;
+  player = { x: PEN.x+PEN.w/2, y: PEN.y+PEN.h+90, r:13, hp:5, maxHp:5,
+             face:"down", moving:false, swing:0, swingCd:0, hurt:0, flip:false };
+  sheep  = { x: PEN.x+PEN.w/2, y: PEN.y+PEN.h/2, r:11, hp:3, maxHp:3,
+             face:"down", state:"graze", tx:0, ty:0, timer:120,
+             herded:0, bleat:90, hurt:0, alive:true, flip:false, moving:false };
+  wolves = []; wave = 0; waveState = "idle"; waveTimer = 150;
+  alert = null; bleatCue = null; state = "play";
+  scatterWorld();
+}
+function scatterWorld() {
+  trees = []; props = [];
+  for (let i = 0; i < 90; i++) {
+    const x = rnd(80, WORLD_W-80), y = rnd(80, WORLD_H-80);
+    if (x > PEN.x-160 && x < PEN.x+PEN.w+160 && y > PEN.y-160 && y < PEN.y+PEN.h+220) continue;
+    trees.push({ x, y, r:12 });
+  }
+  for (let i = 0; i < 70; i++)
+    props.push({ x: rnd(40, WORLD_W-40), y: rnd(40, WORLD_H-40), k: Math.floor(rnd(0,4)) });
+}
+
+// ---------------- INPUT ----------------
+// Four schemes, all live simultaneously — the player never picks one.
+const keys = {};
+let mouse = { x:0, y:0, left:false, right:false };
+let actionEdge = false;   // true for one frame when any "action" is pressed
+
+window.addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+  if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k)) e.preventDefault();
+  if (!keys[k] && (k === " " || k === "e")) actionEdge = true;
+  keys[k] = true;
+  if (state === "over" && k === "r") newRun();
+});
+window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+canvas.addEventListener("mousemove", e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) * (VW / r.width);
+  mouse.y = (e.clientY - r.top) * (VH / r.height);
+});
+canvas.addEventListener("mousedown", e => {
+  ac();
+  if (e.button === 0) { mouse.left = true; actionEdge = true; }
+  if (e.button === 2) mouse.right = true;
+  if (state === "over") newRun();
+});
+window.addEventListener("mouseup", e => {
+  if (e.button === 0) mouse.left = false;
+  if (e.button === 2) mouse.right = false;
+});
+
+// gamepad: left stick moves, A swings
+let padActionPrev = false;
+function readPad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const p of pads) {
+    if (!p) continue;
+    const ax = p.axes[0] || 0, ay = p.axes[1] || 0;
+    const dead = 0.22;
+    const mx = Math.abs(ax) > dead ? ax : 0;
+    const my = Math.abs(ay) > dead ? ay : 0;
+    const a = p.buttons[0] && p.buttons[0].pressed;
+    if (a && !padActionPrev) actionEdge = true;
+    padActionPrev = a;
+    return { x: mx, y: my };
+  }
+  padActionPrev = false;
+  return { x: 0, y: 0 };
+}
+
+// combine every scheme into one movement vector
+function moveVector() {
+  let dx = 0, dy = 0;
+  if (keys["w"] || keys["arrowup"]) dy -= 1;
+  if (keys["s"] || keys["arrowdown"]) dy += 1;
+  if (keys["a"] || keys["arrowleft"]) dx -= 1;
+  if (keys["d"] || keys["arrowright"]) dx += 1;
+  const pad = readPad();
+  dx += pad.x; dy += pad.y;
+  // hold right mouse to walk toward the cursor
+  if (mouse.right) {
+    const wx = mouse.x + camX, wy = mouse.y + camY;
+    const ox = wx - player.x, oy = wy - player.y, d = Math.hypot(ox, oy);
+    if (d > 12) { dx += ox / d; dy += oy / d; }
+  }
+  const len = Math.hypot(dx, dy);
+  return len > 1 ? { x: dx/len, y: dy/len, len: 1 } : { x: dx, y: dy, len };
+}
+
+function nearGate() {
+  const g = gateRect();
+  if (!g) return false;
+  return Math.hypot(player.x - (g.x+g.w/2), player.y - (g.y+g.h/2)) < 60;
+}
+function doAction() {
+  if (nearGate()) { gateClosed = !gateClosed; playAt("sfx-gate", player.x, player.y, 0.8); }
+  else swing();
+}
+function swing() {
+  if (state !== "play" || player.swingCd > 0) return;
+  player.swing = 12; player.swingCd = 22;
+  playAt("sfx-punch", player.x, player.y, 0.5);
+  for (const w of wolves) {
+    if (w.dead) continue;
+    if (dist(player, w) < 56) {
+      w.hp -= 1; w.knock = 10; w.kx = w.x - player.x; w.ky = w.y - player.y;
+      playAt("sfx-hit", w.x, w.y, 0.7);
+      if (w.hp <= 0) { w.dead = true; w.deathT = 0; playAt("sfx-wolf-die", w.x, w.y, 0.8); }
+    }
+  }
+}
+
+// ---------------- COLLISION ----------------
+function blocked(x, y, r) {
+  for (const t of trees) if (Math.hypot(x-t.x, y-t.y) < r + t.r) return true;
+  for (const f of fence) {
+    if (!segSolid(f)) continue;
+    const cx = clamp(x, f.x, f.x+f.w), cy = clamp(y, f.y, f.y+f.h);
+    if (Math.hypot(x-cx, y-cy) < r) return true;
+  }
+  return false;
+}
+function moveEntity(e, dx, dy) {
+  if (dx && !blocked(e.x+dx, e.y, e.r)) e.x += dx;
+  if (dy && !blocked(e.x, e.y+dy, e.r)) e.y += dy;
+  e.x = clamp(e.x, 20, WORLD_W-20);
+  e.y = clamp(e.y, 20, WORLD_H-20);
+}
+function faceFrom(dx, dy) {
+  if (Math.abs(dx) > Math.abs(dy)) return "side";
+  return dy < 0 ? "up" : "down";
+}
+
+// AI steering. Walking straight at a target jams animals against trees
+// forever, so if the direct line is blocked, fan out and take the first
+// angle that isn't. Crude, but enough for open woodland.
+const STEER = [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6];
+function moveAI(e, dx, dy, sp) {
+  const len = Math.hypot(dx, dy) || 1;
+  dx /= len; dy /= len;
+  for (const a of STEER) {
+    const c = Math.cos(a), si = Math.sin(a);
+    const nx = dx*c - dy*si, ny = dx*si + dy*c;
+    if (!blocked(e.x + nx*sp, e.y + ny*sp, e.r)) {
+      e.x = clamp(e.x + nx*sp, 20, WORLD_W-20);
+      e.y = clamp(e.y + ny*sp, 20, WORLD_H-20);
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---------------- UPDATE ----------------
+function update() {
+  frame++;
+  if (shake > 0) shake--;
+  if (alert && --alert.life <= 0) alert = null;
+  if (bleatCue && --bleatCue.life <= 0) bleatCue = null;
+
+  const act = actionEdge; actionEdge = false;
+  if (state !== "play") { readPad(); return; }
+  if (act) doAction();
+
+  updatePlayer();
+  updateSheep();
+  updateWolves();
+  updateWaves();
+
+  camX = clamp(player.x - VW/2, 0, WORLD_W - VW);
+  camY = clamp(player.y - VH/2, 0, WORLD_H - VH);
+}
+
+function updatePlayer() {
+  const sp = 2.7, m = moveVector();
+  player.moving = m.len > 0.05;
+  if (player.moving) {
+    player.face = faceFrom(m.x, m.y);
+    player.flip = m.x < 0;
+    moveEntity(player, m.x * sp, m.y * sp);
+  }
+  if (player.swing > 0) player.swing--;
+  if (player.swingCd > 0) player.swingCd--;
+  if (player.hurt > 0) player.hurt--;
+
+  // walking over the sheep gathers it — it follows closely for a while
+  if (sheep.alive && dist(player, sheep) < 34) {
+    if (sheep.herded <= 0) sheep.state = "herded";
+    sheep.herded = 300;
+  }
+}
+
+function updateSheep() {
+  if (!sheep.alive) return;
+  const s = sheep;
+  if (s.hurt > 0) s.hurt--;
+  if (s.herded > 0) s.herded--;
+
+  let scare = null;
+  for (const w of wolves) if (!w.dead && dist(w, s) < 150) { scare = w; break; }
+
+  if (scare) {
+    s.state = "flee";
+    const a = Math.atan2(s.y - scare.y, s.x - scare.x);
+    s.tx = s.x + Math.cos(a)*200; s.ty = s.y + Math.sin(a)*200;
+  } else if (s.herded > 0) {
+    s.state = "herded"; s.tx = player.x; s.ty = player.y;
+  } else if (--s.timer <= 0) {
+    // the entire point of the game: sometimes it just buggers off
+    const safe = inPen(s) && gateClosed && penHoles() === 0;
+    if (!safe && Math.random() < 0.55) {
+      s.state = "wander";
+      const t = trees.length ? trees[Math.floor(Math.random()*trees.length)] : null;
+      s.tx = t ? t.x + rnd(-80,80) : rnd(100, WORLD_W-100);
+      s.ty = t ? t.y + rnd(-80,80) : rnd(100, WORLD_H-100);
+      say("THE SHEEP HAS WANDERED OFF!", "#f5d76e");
+    } else {
+      s.state = "graze";
+      s.tx = s.x + rnd(-60,60); s.ty = s.y + rnd(-60,60);
+    }
+    s.timer = s.state === "graze" ? rnd(120,260) : rnd(300,500);
+  }
+
+  const sp = s.state === "flee" ? 2.3 : s.state === "herded" ? 2.2 : 1.1;
+  const dx = s.tx - s.x, dy = s.ty - s.y, d = Math.hypot(dx, dy);
+  const stopAt = s.state === "herded" ? 40 : 8;
+  if (d > stopAt) {
+    s.face = faceFrom(dx, dy); s.flip = dx < 0;
+    moveAI(s, dx, dy, sp); s.moving = true;
+  } else s.moving = false;
+
+  if (--s.bleat <= 0) {
+    const far = dist(player, s);
+    const lost = s.state === "wander" || s.state === "flee" || far > 300;
+    s.bleat = lost ? rnd(60,130) : rnd(200,400);
+    playAt("sfx-bleat-" + (1 + Math.floor(Math.random()*3)), s.x, s.y, lost ? 1 : 0.5);
+    if (lost && far > 260)
+      bleatCue = { angle: Math.atan2(s.y - player.y, s.x - player.x), life: 110 };
+  }
+}
+
+function updateWolves() {
+  for (const w of wolves) {
+    if (w.dead) { w.deathT++; continue; }
+    let target = null, kind = "";
+    const exposed = sheep.alive && (!inPen(sheep) || !gateClosed || penHoles() > 0);
+    if (exposed) { target = sheep; kind = "sheep"; }
+    else if (dist(w, player) < 420) { target = player; kind = "player"; }
+    else {
+      let best = null, bd = 1e9;
+      for (const f of fence) {
+        if (!segSolid(f) || f.gate) continue;
+        const d = Math.hypot(w.x-(f.x+f.w/2), w.y-(f.y+f.h/2));
+        if (d < bd) { bd = d; best = f; }
+      }
+      if (best) { target = { x:best.x+best.w/2, y:best.y+best.h/2, seg:best }; kind = "fence"; }
+    }
+    if (!target) { target = player; kind = "player"; }
+
+    const dx = target.x-w.x, dy = target.y-w.y, d = Math.hypot(dx,dy) || 1;
+    const reach = kind === "fence" ? 30 : 26;
+
+    if (w.knock > 0) {
+      const kl = Math.hypot(w.kx, w.ky) || 1;
+      moveEntity(w, w.kx/kl*3, w.ky/kl*3); w.knock--;
+    } else if (d > reach) {
+      w.face = faceFrom(dx, dy); w.flip = dx < 0;
+      moveAI(w, dx, dy, w.sp); w.moving = true;
+    } else {
+      w.moving = false;
+      if (--w.atk <= 0) {
+        w.atk = 45;
+        if (kind === "sheep") {
+          sheep.hp--; sheep.hurt = 20; shake = 5;
+          playAt("sfx-hit", sheep.x, sheep.y, 1);
+          if (sheep.hp <= 0) { sheep.alive = false; say("THE SHEEP IS GONE.", "#ff6b6b", 240); state = "over"; }
+        } else if (kind === "player") {
+          player.hp--; player.hurt = 30; shake = 7;
+          playAt("sfx-hit", player.x, player.y, 1);
+          if (player.hp <= 0) { say("YOU WENT DOWN.", "#ff6b6b", 240); state = "over"; }
+        } else {
+          target.seg.hp--; shake = 3;
+          playAt("sfx-fence-hit", target.x, target.y, 0.9);
+          if (target.seg.hp <= 0) say("THE PEN IS BREACHED!", "#ff9f43");
+        }
+      }
+    }
+    if (Math.hypot(w.x - w.lx, w.y - w.ly) < 6) w.stuck++; else { w.stuck = 0; w.lx = w.x; w.ly = w.y; }
+    if (w.stuck > 240 && w.moving) {
+      const a = Math.atan2(target.y - w.y, target.x - w.x);
+      w.x = clamp(w.x + Math.cos(a) * w.sp, 20, WORLD_W - 20);
+      w.y = clamp(w.y + Math.sin(a) * w.sp, 20, WORLD_H - 20);
+      if (w.stuck > 300) { w.stuck = 0; w.lx = w.x; w.ly = w.y; }
+    }
+    if (--w.growl <= 0) { w.growl = rnd(200,500); playAt("sfx-wolf-growl", w.x, w.y, 0.5); }
+  }
+  wolves = wolves.filter(w => !(w.dead && w.deathT > 60));
+}
+
+function updateWaves() {
+  if (waveState === "idle") { if (--waveTimer <= 0) startWave(); }
+  else if (waveState === "running" && wolves.every(w => w.dead)) {
+    waveState = "idle"; waveTimer = 300;
+    if (wave >= 3) { say("YOU SURVIVED THE NIGHT.", "#7bed9f", 300); state = "over"; }
+    else say("WAVE CLEARED", "#7bed9f");
+  }
+}
+function startWave() {
+  wave++; waveState = "running";
+  const n = 2 + wave * 2;
+  for (let i = 0; i < n; i++) {
+    const edge = Math.floor(Math.random()*4);
+    let x, y;
+    if (edge === 0) { x = rnd(0, WORLD_W); y = 20; }
+    else if (edge === 1) { x = rnd(0, WORLD_W); y = WORLD_H-20; }
+    else if (edge === 2) { x = 20; y = rnd(0, WORLD_H); }
+    else { x = WORLD_W-20; y = rnd(0, WORLD_H); }
+    wolves.push({ x, y, r:13, hp:2, sp:rnd(1.8,2.2), atk:30, growl:rnd(60,300),
+                  face:"down", dead:false, deathT:0, knock:0, flip:false, moving:false,
+                  lx:x, ly:y, stuck:0 });
+  }
+  say("WAVE " + wave, "#ffffff");
+  playAt("sfx-wave-start", player.x, player.y, 0.9);
+}
+function say(text, color, life) { alert = { text, color: color||"#fff", life: life||130 }; }
+
+// ---------------- DRAW ----------------
+function drawStrip(name, x, y, t, flip, fallback) {
+  const s = strips[name];
+  if (!s) { fallback(); return; }
+  const f = Math.floor(t) % s.frames;
+  ctx.save();
+  if (flip) { ctx.translate(x,0); ctx.scale(-1,1); ctx.translate(-x,0); }
+  ctx.drawImage(s.img, f*s.fw, 0, s.fw, s.fh,
+                Math.round(x - s.fw/2), Math.round(y - s.fh + 8), s.fw, s.fh);
+  ctx.restore();
+}
+
+function draw() {
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+  ctx.translate(-Math.round(camX), -Math.round(camY));
+
+  drawGround();
+  drawFence();
+
+  // Y-SORT: draw by base Y so things overlap correctly
+  const list = [];
+  for (const t of trees) list.push({ y:t.y, f:() => drawTrunk(t) });
+  for (const w of wolves) list.push({ y:w.y, f:() => drawWolf(w) });
+  if (sheep.alive) list.push({ y:sheep.y, f:drawSheep });
+  list.push({ y:player.y, f:drawPlayer });
+  list.sort((a,b) => a.y - b.y);
+  for (const d of list) d.f();
+
+  for (const t of trees) drawCanopy(t);   // canopies always on top
+
+  ctx.restore();
+  drawHUD();
+}
+
+function drawGround() {
+  const x0 = Math.floor(camX/TILE)*TILE, y0 = Math.floor(camY/TILE)*TILE;
+  for (let x = x0; x < camX+VW+TILE; x += TILE)
+    for (let y = y0; y < camY+VH+TILE; y += TILE) {
+      if (images.grass) ctx.drawImage(images.grass, x, y, TILE, TILE);
+      else { ctx.fillStyle = ((x/TILE + y/TILE) % 2) ? "#2f4a2a" : "#33502d";
+             ctx.fillRect(x, y, TILE, TILE); }
+    }
+  ctx.globalAlpha = 0.8;
+  for (const p of props) {
+    if (p.x < camX-40 || p.x > camX+VW+40 || p.y < camY-40 || p.y > camY+VH+40) continue;
+    ctx.fillStyle = ["#5c7a4a","#7a6a4a","#8a9a5a","#6a5a4a"][p.k];
+    ctx.fillRect(p.x, p.y, 8, 6);
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "rgba(90,70,40,0.18)";
+  ctx.fillRect(PEN.x, PEN.y, PEN.w, PEN.h);
+}
+
+function drawFence() {
+  for (const f of fence) {
+    if (f.gate) {
+      const img = gateClosed ? images.gateClosed : images.gateOpen;
+      if (img) ctx.drawImage(img, f.x, f.y-16, f.w, 32);
+      else { ctx.fillStyle = gateClosed ? "#a8763e" : "rgba(168,118,62,0.25)";
+             ctx.fillRect(f.x, f.y, f.w, f.h); }
+      continue;
+    }
+    if (f.hp <= 0) { ctx.fillStyle = "rgba(90,60,30,0.35)";
+                     ctx.fillRect(f.x, f.y, f.w, f.h*0.4); continue; }
+    const img = f.vertical ? images.fenceV : images.fenceH;
+    if (img) ctx.drawImage(img, f.x, f.y, f.w, f.h);
+    else {
+      const wear = f.hp / FENCE_HP;
+      ctx.fillStyle = wear > 0.66 ? "#9c7040" : wear > 0.33 ? "#7d5a33" : "#5e4426";
+      ctx.fillRect(f.x, f.y, f.w, f.h);
+    }
+  }
+  if (nearGate()) {
+    const g = gateRect();
+    ctx.strokeStyle = "#ffe66d"; ctx.lineWidth = 2;
+    ctx.strokeRect(g.x-3, g.y-19, g.w+6, 38);
+    ctx.fillStyle = "#ffe66d"; ctx.font = "12px monospace"; ctx.textAlign = "center";
+    ctx.fillText(gateClosed ? "OPEN GATE" : "SHUT GATE", g.x+g.w/2, g.y-26);
+  }
+}
+
+function drawTrunk(t) {
+  if (images.trunk) ctx.drawImage(images.trunk, t.x-24, t.y-56, 48, 64);
+  else { ctx.fillStyle = "#4a3520"; ctx.fillRect(t.x-7, t.y-34, 14, 38); }
+}
+function drawCanopy(t) {
+  const under = Math.hypot(player.x-t.x, player.y-t.y) < 54;
+  ctx.globalAlpha = under ? 0.45 : 1;
+  if (images.canopy) ctx.drawImage(images.canopy, t.x-48, t.y-120, 96, 80);
+  else {
+    ctx.fillStyle = "#1f3a1c";
+    ctx.beginPath(); ctx.arc(t.x, t.y-58, 34, 0, 7); ctx.fill();
+    ctx.fillStyle = "#27471f";
+    ctx.beginPath(); ctx.arc(t.x-10, t.y-66, 24, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawPlayer() {
+  const anim = player.moving ? "walk" : "idle";
+  drawStrip("farmer-"+anim+"-"+player.face, player.x, player.y,
+    frame/(player.moving?8:30), player.face === "side" && player.flip,
+    () => {
+      ctx.fillStyle = player.hurt > 0 && frame%6 < 3 ? "#fff" : "#d9d0c0";
+      ctx.fillRect(player.x-10, player.y-30, 20, 34);
+      ctx.fillStyle = "#8a5a3a"; ctx.fillRect(player.x-10, player.y-38, 20, 10);
+    });
+  if (player.swing > 0) {
+    ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(player.x, player.y-12, 34, 0, 7); ctx.stroke();
+  }
+}
+
+function drawSheep() {
+  const s = sheep;
+  const anim = s.moving ? "walk" : (s.state === "graze" ? "graze" : "idle");
+  const key = anim === "graze" ? "sheep-graze" : "sheep-"+anim+"-"+s.face;
+  drawStrip(key, s.x, s.y, frame/(s.moving?8:24), s.face === "side" && s.flip,
+    () => {
+      ctx.fillStyle = s.hurt > 0 && frame%6 < 3 ? "#ff9c9c" : "#f2efe6";
+      ctx.fillRect(s.x-12, s.y-22, 24, 22);
+      ctx.fillStyle = "#2b2b2b";
+      ctx.fillRect(s.x + (s.flip?-16:8), s.y-20, 8, 8);
+    });
+  for (let i = 0; i < s.maxHp; i++) {
+    ctx.fillStyle = i < s.hp ? "#7bed9f" : "#3a4a3a";
+    ctx.fillRect(s.x-12 + i*9, s.y-34, 7, 3);
+  }
+}
+
+function drawWolf(w) {
+  if (w.dead) {
+    ctx.globalAlpha = Math.max(0, 1 - w.deathT/60);
+    drawStrip("wolf-death", w.x, w.y, w.deathT/15, w.flip,
+      () => { ctx.fillStyle = "#5a4a4a"; ctx.fillRect(w.x-14, w.y-10, 28, 12); });
+    ctx.globalAlpha = 1; return;
+  }
+  drawStrip("wolf-walk-"+w.face, w.x, w.y, frame/8, w.face === "side" && w.flip,
+    () => {
+      ctx.fillStyle = "#4b4653"; ctx.fillRect(w.x-14, w.y-22, 28, 22);
+      ctx.fillStyle = "#d64545"; ctx.fillRect(w.x + (w.flip?-18:10), w.y-20, 8, 5);
+    });
+}
+
+function drawHUD() {
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#e8e8e8"; ctx.font = "bold 16px monospace";
+  ctx.fillText("WAVE " + (wave || "-"), 16, 26);
+  for (let i = 0; i < player.maxHp; i++) {
+    ctx.fillStyle = i < player.hp ? "#e14b4b" : "#3a2a2a";
+    ctx.fillRect(16 + i*16, 36, 12, 12);
+  }
+  const broken = fence.filter(f => !f.gate && f.hp <= 0).length;
+  const total = fence.filter(f => !f.gate).length;
+  ctx.fillStyle = broken ? "#ff9f43" : "#8fa88f"; ctx.font = "12px monospace";
+  ctx.fillText("PEN " + (total-broken) + "/" + total + (gateClosed ? "  GATE SHUT" : "  GATE OPEN"), 16, 68);
+
+  if (sheep.alive) {
+    ctx.textAlign = "right";
+    const out = !inPen(sheep);
+    ctx.fillStyle = out ? "#ffe66d" : "#8fa88f"; ctx.font = "12px monospace";
+    ctx.fillText(out ? "SHEEP LOOSE — " + Math.round(dist(player,sheep)) + "m" : "SHEEP PENNED", VW-16, 26);
+  }
+
+  if (bleatCue) {
+    const a = bleatCue.angle, R = 210;
+    ctx.globalAlpha = Math.min(1, bleatCue.life/40);
+    ctx.save();
+    ctx.translate(VW/2 + Math.cos(a)*R, VH/2 + Math.sin(a)*R); ctx.rotate(a);
+    ctx.fillStyle = "#ffe66d";
+    ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-10,-9); ctx.lineTo(-10,9);
+    ctx.closePath(); ctx.fill();
+    ctx.restore(); ctx.globalAlpha = 1;
+  }
+
+  if (alert) {
+    ctx.textAlign = "center";
+    ctx.globalAlpha = Math.min(1, alert.life/30);
+    ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0, 96, VW, 44);
+    ctx.fillStyle = alert.color; ctx.font = "bold 24px monospace";
+    ctx.fillText(alert.text, VW/2, 126);
+    ctx.globalAlpha = 1;
+  }
+
+  if (state === "over") {
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(0,0,VW,VH);
+    ctx.fillStyle = "#e8e8e8"; ctx.font = "bold 40px monospace";
+    ctx.fillText("RUN OVER", VW/2, VH/2-10);
+    ctx.font = "16px monospace"; ctx.fillStyle = "#8fa88f";
+    ctx.fillText("wave " + wave + " — press R or click to try again", VW/2, VH/2+26);
+  }
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#5a6a5a"; ctx.font = "11px monospace";
+  ctx.fillText("WASD / arrows / stick / hold RMB = move   ·   SPACE / LMB / (A) = swing + gate", 16, VH-14);
+}
+
+newRun();
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
 </body>
 </html>
