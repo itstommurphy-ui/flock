@@ -80,6 +80,28 @@ function loadSound(name, file) {
     .then(b => ac().decodeAudioData(b))
     .then(b => { buffers[name] = b; }).catch(() => {});
 }
+// Music: decoded into a buffer and looped, so the wrap point is seamless.
+// Can't start until the player clicks — browsers block audio before a gesture.
+let musicBuf = null, musicSrc = null, musicStarted = false;
+fetch(A + "music-loop.wav")
+  .then(r => { if (!r.ok) throw 0; return r.arrayBuffer(); })
+  .then(b => ac().decodeAudioData(b))
+  .then(b => { musicBuf = b; startMusic(); })
+  .catch(() => {});
+
+function startMusic() {
+  if (musicStarted || !musicBuf || !audioCtx) return;
+  if (audioCtx.state === "suspended") return;   // still waiting on a click
+  musicStarted = true;
+  const g = audioCtx.createGain();
+  g.gain.value = 0.32;
+  musicSrc = audioCtx.createBufferSource();
+  musicSrc.buffer = musicBuf;
+  musicSrc.loop = true;
+  musicSrc.connect(g).connect(audioCtx.destination);
+  musicSrc.start();
+}
+
 ["sfx-bleat-calm-1","sfx-bleat-calm-2",
  "sfx-bleat-panic-1","sfx-bleat-panic-2","sfx-bleat-panic-3","sfx-punch","sfx-hit",
  "sfx-wolf-growl","sfx-wolf-die","sfx-fence-hit","sfx-gate","sfx-wave-start"
@@ -212,6 +234,7 @@ let mouse = { x:0, y:0, left:false, right:false };
 let swingEdge = false, gateEdge = false, shooEdge = false;   // one-frame press flags
 
 window.addEventListener("keydown", e => {
+  ac(); if (audioCtx.state === "suspended") audioCtx.resume().then(startMusic); else startMusic();
   const k = e.key.toLowerCase();
   if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k)) e.preventDefault();
   if (!keys[k] && k === " ") swingEdge = true;
@@ -229,7 +252,7 @@ canvas.addEventListener("mousemove", e => {
   mouse.y = (e.clientY - r.top) * (VH / r.height);
 });
 canvas.addEventListener("mousedown", e => {
-  ac();
+  ac(); if (audioCtx.state === "suspended") audioCtx.resume().then(startMusic); else startMusic();
   if (e.button === 0) { mouse.left = true; swingEdge = true; }
   if (e.button === 2) { mouse.right = true; gateEdge = true; }
   if (state === "over") newRun();
