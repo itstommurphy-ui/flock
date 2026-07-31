@@ -212,7 +212,8 @@ tile, a puddle.
 
 | File | Notes |
 |---|---|
-| sfx-bleat-1.wav / -2 / -3 | THE important one. 2–3 variants so it doesn't grate — you'll hear this constantly |
+| sfx-bleat-calm-1.wav / -2 | Contented. LOW, SLOW, unhurried — heard every 6–15s when it's safe. Must not grate |
+| sfx-bleat-panic-1.wav / -2 / -3 | Frightened. Higher, shorter, sharper — fires every ~1.5s when a wolf is near or loose in the pen. This is the one that means "GO NOW" |
 | sfx-punch.wav | |
 | sfx-hit.wav | connecting with a wolf |
 | sfx-wolf-growl.wav | |
@@ -242,7 +243,39 @@ tile, a puddle.
 
 ---
 
-## 9. Decisions Log
+## 9. Playtest 1 — findings (designer)
+
+The loop works. "Eight wolves chasing my sheep through the trees and me
+chasing after them" — emergent, unscripted, and funny. Foundation holds.
+
+Acted on:
+- **Gate moved to RMB / E / pad-B.** Punching at the gate was opening it
+  by accident — same button did both. LMB / SPACE / pad-A now swings only.
+  Hold-RMB-to-walk removed; WASD won on feel, and RMB was needed for the gate.
+- **Woods roughly doubled and CLUMPED** (90 scattered → ~158 in 16 clusters
+  plus loners). Real woods and real clearings instead of even scatter.
+  9% of the map is now solid, so it's still traversable.
+- **Bleat split into calm and panic.** Was constant and grating. Calm is
+  slow and occasional; panic only fires when a wolf is within 260px or one
+  is loose inside the pen.
+- **False "WANDERED OFF" alert fixed.** It fired whenever the sheep picked
+  a wander target, even standing in the pen. Now it fires only on the frame
+  it actually crosses out of the pen.
+
+Added on the back of it:
+- **SHOO command (Q / gamepad X).** Stops the sheep trailing you. Said
+  inside the pen it also SETTLES the animal — it won't wander or re-latch
+  for 12–23s, and shows a small "staying" tag. Farmer shouts
+  "GEEET BACK IN THERE" (or "STAY THERE THEN" outside the pen).
+- **It only follows you out of the pen ~50% of the time.** Measured at 46%
+  over 200 trials. Leaving now carries a small risk you have to glance back
+  and check, rather than a guaranteed escort.
+
+Confirmed good, left alone: movement speed, canopy fade, the gate being a
+genuinely dangerous thing to open. Punching is "fine, not satisfying" —
+noted, not yet addressed.
+
+## 10. Decisions Log
 
 - 2026-07: Genre chosen — real-time top-down pixel horde survival.
   Turn-based parked.
@@ -257,3 +290,10 @@ tile, a puddle.
 - 2026-07: v1 scope frozen at 1 sheep / 1 pen / fists / 1 enemy /
   3 waves, no shop. Everything else backlogged.
 - 2026-07: Tone deliberately undecided. NOT assumed comedy.
+- 2026-07: Controls settled — WASD/arrows/stick move, LMB/SPACE/A swing,
+  RMB/E/B gate, Q/pad-X shoo. All schemes live at once, no menu toggle.
+- 2026-07: Herding is not sticky — a herded sheep only trails you out of
+  the pen about half the time, and SHOO releases it deliberately.
+- 2026-07: AI steering added (fan out around obstacles) plus a stuck-wolf
+  failsafe — a wolf wedged behind scenery meant a wave that could never
+  end, which is worse than a wolf clipping a tree.

@@ -20,9 +20,10 @@
 // no code changes. See DESIGN.md section 8 for the list and sizes.
 //
 // CONTROLS (all live at once, no toggle needed):
-//   WASD / arrow keys / gamepad left stick / hold RIGHT MOUSE  = move
-//   SPACE / LEFT MOUSE / gamepad A                             = swing
-//   same button while stood at the gate                        = open/shut
+//   WASD / arrow keys / gamepad left stick   = move
+//   LEFT MOUSE / SPACE / gamepad A           = swing
+//   RIGHT MOUSE / E / gamepad B              = open + shut the gate
+//   Q / gamepad X                            = "get back in there" (shoo)
 // ============================================================
 
 const canvas = document.getElementById("game");
@@ -79,7 +80,8 @@ function loadSound(name, file) {
     .then(b => ac().decodeAudioData(b))
     .then(b => { buffers[name] = b; }).catch(() => {});
 }
-["sfx-bleat-1","sfx-bleat-2","sfx-bleat-3","sfx-punch","sfx-hit",
+["sfx-bleat-calm-1","sfx-bleat-calm-2",
+ "sfx-bleat-panic-1","sfx-bleat-panic-2","sfx-bleat-panic-3","sfx-punch","sfx-hit",
  "sfx-wolf-growl","sfx-wolf-die","sfx-fence-hit","sfx-gate","sfx-wave-start"
 ].forEach(n => loadSound(n, A + n + ".wav"));
 
@@ -114,7 +116,8 @@ function placeholderTone(name, dest) {
     e.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(e).connect(dest); o.start(t); o.stop(t + dur);
   };
-  if (name.startsWith("sfx-bleat")) tone(520, 380, 0.35, "sawtooth");
+  if (name.startsWith("sfx-bleat-panic")) tone(700, 480, 0.22, "sawtooth");
+  else if (name.startsWith("sfx-bleat-calm")) tone(430, 350, 0.45, "sawtooth");
   else if (name === "sfx-punch") tone(180, 90, 0.08);
   else if (name === "sfx-hit") tone(300, 120, 0.09);
   else if (name === "sfx-wolf-growl") tone(120, 80, 0.3, "sawtooth");
@@ -165,19 +168,37 @@ let alert = null, frame = 0, camX = 0, camY = 0, shake = 0, bleatCue = null;
 function newRun() {
   buildPen(); gateClosed = true;
   player = { x: PEN.x+PEN.w/2, y: PEN.y+PEN.h+90, r:13, hp:5, maxHp:5,
-             face:"down", moving:false, swing:0, swingCd:0, hurt:0, flip:false };
+             face:"down", moving:false, swing:0, swingCd:0, hurt:0, flip:false,
+             wasInPen:false };
+  farmerLine = null;
   sheep  = { x: PEN.x+PEN.w/2, y: PEN.y+PEN.h/2, r:11, hp:3, maxHp:3,
              face:"down", state:"graze", tx:0, ty:0, timer:120,
-             herded:0, bleat:90, hurt:0, alive:true, flip:false, moving:false };
+             herded:0, bleat:90, hurt:0, alive:true, flip:false, moving:false,
+             wasInPen:true, settled:0 };
   wolves = []; wave = 0; waveState = "idle"; waveTimer = 150;
   alert = null; bleatCue = null; state = "play";
   scatterWorld();
 }
 function scatterWorld() {
   trees = []; props = [];
-  for (let i = 0; i < 90; i++) {
+  // clumps rather than an even scatter — gives real woods and real clearings
+  const clumps = 16;
+  for (let c = 0; c < clumps; c++) {
+    const cx = rnd(120, WORLD_W-120), cy = rnd(120, WORLD_H-120);
+    const n = Math.floor(rnd(8, 20)), spread = rnd(90, 190);
+    for (let i = 0; i < n; i++) {
+      const x = cx + rnd(-spread, spread), y = cy + rnd(-spread, spread);
+      if (x < 60 || x > WORLD_W-60 || y < 60 || y > WORLD_H-60) continue;
+      if (x > PEN.x-170 && x < PEN.x+PEN.w+170 && y > PEN.y-170 && y < PEN.y+PEN.h+230) continue;
+      if (trees.some(t => Math.hypot(t.x-x, t.y-y) < 34)) continue;   // no overlaps
+      trees.push({ x, y, r:12 });
+    }
+  }
+  // a few loners so the map isn't only woods and empty grass
+  for (let i = 0; i < 30; i++) {
     const x = rnd(80, WORLD_W-80), y = rnd(80, WORLD_H-80);
-    if (x > PEN.x-160 && x < PEN.x+PEN.w+160 && y > PEN.y-160 && y < PEN.y+PEN.h+220) continue;
+    if (x > PEN.x-170 && x < PEN.x+PEN.w+170 && y > PEN.y-170 && y < PEN.y+PEN.h+230) continue;
+    if (trees.some(t => Math.hypot(t.x-x, t.y-y) < 40)) continue;
     trees.push({ x, y, r:12 });
   }
   for (let i = 0; i < 70; i++)
@@ -188,12 +209,14 @@ function scatterWorld() {
 // Four schemes, all live simultaneously — the player never picks one.
 const keys = {};
 let mouse = { x:0, y:0, left:false, right:false };
-let actionEdge = false;   // true for one frame when any "action" is pressed
+let swingEdge = false, gateEdge = false, shooEdge = false;   // one-frame press flags
 
 window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k)) e.preventDefault();
-  if (!keys[k] && (k === " " || k === "e")) actionEdge = true;
+  if (!keys[k] && k === " ") swingEdge = true;
+  if (!keys[k] && k === "e") gateEdge = true;
+  if (!keys[k] && k === "q") shooEdge = true;
   keys[k] = true;
   if (state === "over" && k === "r") newRun();
 });
@@ -207,8 +230,8 @@ canvas.addEventListener("mousemove", e => {
 });
 canvas.addEventListener("mousedown", e => {
   ac();
-  if (e.button === 0) { mouse.left = true; actionEdge = true; }
-  if (e.button === 2) mouse.right = true;
+  if (e.button === 0) { mouse.left = true; swingEdge = true; }
+  if (e.button === 2) { mouse.right = true; gateEdge = true; }
   if (state === "over") newRun();
 });
 window.addEventListener("mouseup", e => {
@@ -217,7 +240,7 @@ window.addEventListener("mouseup", e => {
 });
 
 // gamepad: left stick moves, A swings
-let padActionPrev = false;
+let padActionPrev = false, padGatePrev = false, padShooPrev = false;
 function readPad() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
   for (const p of pads) {
@@ -227,8 +250,12 @@ function readPad() {
     const mx = Math.abs(ax) > dead ? ax : 0;
     const my = Math.abs(ay) > dead ? ay : 0;
     const a = p.buttons[0] && p.buttons[0].pressed;
-    if (a && !padActionPrev) actionEdge = true;
-    padActionPrev = a;
+    const b = p.buttons[1] && p.buttons[1].pressed;
+    const xb = p.buttons[2] && p.buttons[2].pressed;
+    if (a && !padActionPrev) swingEdge = true;
+    if (b && !padGatePrev) gateEdge = true;
+    if (xb && !padShooPrev) shooEdge = true;
+    padActionPrev = a; padGatePrev = b; padShooPrev = xb;
     return { x: mx, y: my };
   }
   padActionPrev = false;
@@ -244,12 +271,6 @@ function moveVector() {
   if (keys["d"] || keys["arrowright"]) dx += 1;
   const pad = readPad();
   dx += pad.x; dy += pad.y;
-  // hold right mouse to walk toward the cursor
-  if (mouse.right) {
-    const wx = mouse.x + camX, wy = mouse.y + camY;
-    const ox = wx - player.x, oy = wy - player.y, d = Math.hypot(ox, oy);
-    if (d > 12) { dx += ox / d; dy += oy / d; }
-  }
   const len = Math.hypot(dx, dy);
   return len > 1 ? { x: dx/len, y: dy/len, len: 1 } : { x: dx, y: dy, len };
 }
@@ -259,10 +280,32 @@ function nearGate() {
   if (!g) return false;
   return Math.hypot(player.x - (g.x+g.w/2), player.y - (g.y+g.h/2)) < 60;
 }
-function doAction() {
-  if (nearGate()) { gateClosed = !gateClosed; playAt("sfx-gate", player.x, player.y, 0.8); }
-  else swing();
+function useGate() {
+  if (!nearGate()) return;
+  gateClosed = !gateClosed;
+  playAt("sfx-gate", player.x, player.y, 0.8);
 }
+// "Geeet back in there." Stops the sheep trailing you about; if it's in
+// the pen when you say it, it settles and won't wander for a good while.
+function shoo() {
+  if (!sheep.alive || dist(player, sheep) > 150) {
+    farmerSay("...");
+    return;
+  }
+  sheep.herded = 0;
+  sheep.state = "graze";
+  sheep.tx = sheep.x; sheep.ty = sheep.y;
+  if (inPen(sheep)) {
+    sheep.settled = rnd(700, 1400);
+    farmerSay("GEEET BACK IN THERE");
+  } else {
+    sheep.timer = rnd(120, 240);
+    farmerSay("STAY THERE THEN");
+  }
+}
+let farmerLine = null;
+function farmerSay(t) { farmerLine = { t, life: 90 }; }
+
 function swing() {
   if (state !== "play" || player.swingCd > 0) return;
   player.swing = 12; player.swingCd = 22;
@@ -322,11 +365,15 @@ function update() {
   frame++;
   if (shake > 0) shake--;
   if (alert && --alert.life <= 0) alert = null;
+  if (farmerLine && --farmerLine.life <= 0) farmerLine = null;
   if (bleatCue && --bleatCue.life <= 0) bleatCue = null;
 
-  const act = actionEdge; actionEdge = false;
+  const sw = swingEdge, gt = gateEdge, sh = shooEdge;
+  swingEdge = false; gateEdge = false; shooEdge = false;
   if (state !== "play") { readPad(); return; }
-  if (act) doAction();
+  if (gt) useGate();
+  if (sh) shoo();
+  if (sw) swing();
 
   updatePlayer();
   updateSheep();
@@ -349,11 +396,23 @@ function updatePlayer() {
   if (player.swingCd > 0) player.swingCd--;
   if (player.hurt > 0) player.hurt--;
 
-  // walking over the sheep gathers it — it follows closely for a while
-  if (sheep.alive && dist(player, sheep) < 34) {
+  // walking over the sheep gathers it — unless you've just told it to stay
+  if (sheep.alive && sheep.settled <= 0 && dist(player, sheep) < 34) {
     if (sheep.herded <= 0) sheep.state = "herded";
     sheep.herded = 300;
   }
+
+  // it doesn't trail you out of the pen every time — sometimes it can't be
+  // bothered, which is worth checking before you jog off into the woods
+  const pIn = inPen(player);
+  if (player.wasInPen && !pIn && sheep.herded > 0 && inPen(sheep)) {
+    if (Math.random() < 0.5) {
+      sheep.herded = 0; sheep.state = "graze";
+      sheep.tx = sheep.x; sheep.ty = sheep.y;
+      sheep.settled = rnd(300, 700);
+    }
+  }
+  player.wasInPen = pIn;
 }
 
 function updateSheep() {
@@ -361,6 +420,7 @@ function updateSheep() {
   const s = sheep;
   if (s.hurt > 0) s.hurt--;
   if (s.herded > 0) s.herded--;
+  if (s.settled > 0) s.settled--;
 
   let scare = null;
   for (const w of wolves) if (!w.dead && dist(w, s) < 150) { scare = w; break; }
@@ -373,13 +433,12 @@ function updateSheep() {
     s.state = "herded"; s.tx = player.x; s.ty = player.y;
   } else if (--s.timer <= 0) {
     // the entire point of the game: sometimes it just buggers off
-    const safe = inPen(s) && gateClosed && penHoles() === 0;
+    const safe = (inPen(s) && gateClosed && penHoles() === 0) || s.settled > 0;
     if (!safe && Math.random() < 0.55) {
       s.state = "wander";
       const t = trees.length ? trees[Math.floor(Math.random()*trees.length)] : null;
       s.tx = t ? t.x + rnd(-80,80) : rnd(100, WORLD_W-100);
       s.ty = t ? t.y + rnd(-80,80) : rnd(100, WORLD_H-100);
-      say("THE SHEEP HAS WANDERED OFF!", "#f5d76e");
     } else {
       s.state = "graze";
       s.tx = s.x + rnd(-60,60); s.ty = s.y + rnd(-60,60);
@@ -387,6 +446,7 @@ function updateSheep() {
     s.timer = s.state === "graze" ? rnd(120,260) : rnd(300,500);
   }
 
+  const wasIn = s.wasInPen;
   const sp = s.state === "flee" ? 2.3 : s.state === "herded" ? 2.2 : 1.1;
   const dx = s.tx - s.x, dy = s.ty - s.y, d = Math.hypot(dx, dy);
   const stopAt = s.state === "herded" ? 40 : 8;
@@ -395,13 +455,29 @@ function updateSheep() {
     moveAI(s, dx, dy, sp); s.moving = true;
   } else s.moving = false;
 
+  // the alert fires on the moment it crosses out, not on a whim
+  s.wasInPen = inPen(s);
+  if (wasIn && !s.wasInPen && s.herded <= 0)
+    say("THE SHEEP HAS WANDERED OFF!", "#f5d76e");
+
+  // Bleating. Calm = occasional and slow. Panic = a wolf is close, or one
+  // is loose inside the pen — frequent, higher, and it flags a direction.
+  const wolfNear = wolves.some(w => !w.dead && dist(w, s) < 260);
+  const wolfInPen = wolves.some(w => !w.dead && inPen(w));
+  const panicking = wolfNear || (inPen(s) && wolfInPen);
   if (--s.bleat <= 0) {
-    const far = dist(player, s);
-    const lost = s.state === "wander" || s.state === "flee" || far > 300;
-    s.bleat = lost ? rnd(60,130) : rnd(200,400);
-    playAt("sfx-bleat-" + (1 + Math.floor(Math.random()*3)), s.x, s.y, lost ? 1 : 0.5);
-    if (lost && far > 260)
-      bleatCue = { angle: Math.atan2(s.y - player.y, s.x - player.x), life: 110 };
+    if (panicking) {
+      s.bleat = rnd(70, 130);
+      playAt("sfx-bleat-panic-" + (1 + Math.floor(Math.random()*3)), s.x, s.y, 1);
+      if (dist(player, s) > 240)
+        bleatCue = { angle: Math.atan2(s.y-player.y, s.x-player.x), life: 110 };
+    } else {
+      const out = !inPen(s);
+      s.bleat = out ? rnd(360, 620) : rnd(500, 900);
+      playAt("sfx-bleat-calm-" + (1 + Math.floor(Math.random()*2)), s.x, s.y, out ? 0.6 : 0.35);
+      if (out && dist(player, s) > 420)
+        bleatCue = { angle: Math.atan2(s.y-player.y, s.x-player.x), life: 90 };
+    }
   }
 }
 
@@ -568,7 +644,7 @@ function drawFence() {
     ctx.strokeStyle = "#ffe66d"; ctx.lineWidth = 2;
     ctx.strokeRect(g.x-3, g.y-19, g.w+6, 38);
     ctx.fillStyle = "#ffe66d"; ctx.font = "12px monospace"; ctx.textAlign = "center";
-    ctx.fillText(gateClosed ? "OPEN GATE" : "SHUT GATE", g.x+g.w/2, g.y-26);
+    ctx.fillText(gateClosed ? "RMB / E — OPEN" : "RMB / E — SHUT", g.x+g.w/2, g.y-26);
   }
 }
 
@@ -602,6 +678,16 @@ function drawPlayer() {
     ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(player.x, player.y-12, 34, 0, 7); ctx.stroke();
   }
+  if (farmerLine) {
+    ctx.globalAlpha = Math.min(1, farmerLine.life / 25);
+    ctx.textAlign = "center"; ctx.font = "bold 13px monospace";
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    const w = ctx.measureText(farmerLine.t).width + 14;
+    ctx.fillRect(player.x - w/2, player.y - 66, w, 20);
+    ctx.fillStyle = "#ffe66d";
+    ctx.fillText(farmerLine.t, player.x, player.y - 52);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawSheep() {
@@ -618,6 +704,10 @@ function drawSheep() {
   for (let i = 0; i < s.maxHp; i++) {
     ctx.fillStyle = i < s.hp ? "#7bed9f" : "#3a4a3a";
     ctx.fillRect(s.x-12 + i*9, s.y-34, 7, 3);
+  }
+  if (s.settled > 0 && frame % 40 < 26) {
+    ctx.textAlign = "center"; ctx.font = "10px monospace"; ctx.fillStyle = "#8fa88f";
+    ctx.fillText("staying", s.x, s.y - 40);
   }
 }
 
@@ -686,7 +776,7 @@ function drawHUD() {
 
   ctx.textAlign = "left";
   ctx.fillStyle = "#5a6a5a"; ctx.font = "11px monospace";
-  ctx.fillText("WASD / arrows / stick / hold RMB = move   ·   SPACE / LMB / (A) = swing + gate", 16, VH-14);
+  ctx.fillText("WASD/arrows/stick move  ·  LMB/SPACE swing  ·  RMB/E gate  ·  Q shoo", 16, VH-14);
 }
 
 newRun();
