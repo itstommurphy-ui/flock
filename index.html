@@ -33,6 +33,11 @@ ctx.imageSmoothingEnabled = false;
 
 const WORLD_W = 2400, WORLD_H = 1600, TILE = 64;
 
+// How close the camera sits. 1 = the old wide view, 2 = right in.
+// 1.5 is the current pick; whole numbers are crispest for pixel art.
+const ZOOM = 1.5;
+const VIEW_W = VW / ZOOM, VIEW_H = VH / ZOOM;
+
 // ---------------- ASSETS ----------------
 const strips = {};
 function loadStrip(name, file, frames, fw, fh) {
@@ -403,8 +408,8 @@ function update() {
   updateWolves();
   updateWaves();
 
-  camX = clamp(player.x - VW/2, 0, WORLD_W - VW);
-  camY = clamp(player.y - VH/2, 0, WORLD_H - VH);
+  camX = clamp(player.x - VIEW_W/2, 0, Math.max(0, WORLD_W - VIEW_W));
+  camY = clamp(player.y - VIEW_H/2, 0, Math.max(0, WORLD_H - VIEW_H));
 }
 
 function updatePlayer() {
@@ -603,7 +608,9 @@ function drawStrip(name, x, y, t, flip, fallback) {
 
 function draw() {
   ctx.save();
+  // shake in screen pixels, then zoom, then pan — so shake doesn't scale
   if (shake > 0) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+  ctx.scale(ZOOM, ZOOM);
   ctx.translate(-Math.round(camX), -Math.round(camY));
 
   drawGround();
@@ -626,15 +633,15 @@ function draw() {
 
 function drawGround() {
   const x0 = Math.floor(camX/TILE)*TILE, y0 = Math.floor(camY/TILE)*TILE;
-  for (let x = x0; x < camX+VW+TILE; x += TILE)
-    for (let y = y0; y < camY+VH+TILE; y += TILE) {
+  for (let x = x0; x < camX+VIEW_W+TILE; x += TILE)
+    for (let y = y0; y < camY+VIEW_H+TILE; y += TILE) {
       if (images.grass) ctx.drawImage(images.grass, x, y, TILE, TILE);
       else { ctx.fillStyle = ((x/TILE + y/TILE) % 2) ? "#2f4a2a" : "#33502d";
              ctx.fillRect(x, y, TILE, TILE); }
     }
   ctx.globalAlpha = 0.8;
   for (const p of props) {
-    if (p.x < camX-40 || p.x > camX+VW+40 || p.y < camY-40 || p.y > camY+VH+40) continue;
+    if (p.x < camX-40 || p.x > camX+VIEW_W+40 || p.y < camY-40 || p.y > camY+VIEW_H+40) continue;
     ctx.fillStyle = ["#5c7a4a","#7a6a4a","#8a9a5a","#6a5a4a"][p.k];
     ctx.fillRect(p.x, p.y, 8, 6);
   }
