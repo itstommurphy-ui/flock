@@ -297,6 +297,10 @@ noted, not yet addressed.
 - 2026-07: Tone deliberately undecided. NOT assumed comedy.
 - 2026-07: Controls settled — WASD/arrows/stick move, LMB/SPACE/A swing,
   RMB/E/B gate, Q/pad-X shoo. All schemes live at once, no menu toggle.
+- 2026-07: PAUSE on ESC / P / gamepad START. Freezes the whole world,
+  overlay lists the controls, click or press again to resume. Window blur
+  auto-pauses AND clears held keys (a swallowed keyup would otherwise
+  leave a direction stuck on).
 - 2026-07: Herding is not sticky — a herded sheep only trails you out of
   the pen about half the time, and SHOO releases it deliberately.
 - 2026-07: AI steering added (fan out around obstacles) plus a stuck-wolf

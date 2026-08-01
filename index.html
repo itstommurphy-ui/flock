@@ -24,6 +24,7 @@
 //   LEFT MOUSE / SPACE / gamepad A           = swing
 //   RIGHT MOUSE / E / gamepad B              = open + shut the gate
 //   Q / gamepad X                            = "get back in there" (shoo)
+//   ESC / P / gamepad START                  = pause
 // ============================================================
 
 const canvas = document.getElementById("game");
@@ -258,7 +259,7 @@ function newRun() {
              herded:0, bleat:90, hurt:0, alive:true, flip:false, moving:false,
              wasInPen:true, settled:0 };
   wolves = []; wave = 0; waveState = "idle"; waveTimer = 150;
-  alert = null; bleatCue = null; state = "play";
+  alert = null; bleatCue = null; state = "play"; paused = false;
   scatterWorld();
 }
 function scatterWorld() {
@@ -292,6 +293,7 @@ function scatterWorld() {
 const keys = {};
 let mouse = { x:0, y:0, left:false, right:false };
 let swingEdge = false, gateEdge = false, shooEdge = false;   // one-frame press flags
+let paused = false, pauseKeyDown = false;
 
 window.addEventListener("keydown", e => {
   ac(); if (audioCtx.state === "suspended") audioCtx.resume().then(startMusic); else startMusic();
@@ -300,10 +302,21 @@ window.addEventListener("keydown", e => {
   if (!keys[k] && k === " ") swingEdge = true;
   if (!keys[k] && k === "e") gateEdge = true;
   if (!keys[k] && k === "q") shooEdge = true;
+  if ((k === "escape" || k === "p") && !pauseKeyDown && state === "play") { pauseKeyDown = true; togglePause(); }
   keys[k] = true;
   if (state === "over" && k === "r") newRun();
 });
-window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener("keyup", e => {
+  const k = e.key.toLowerCase();
+  keys[k] = false;
+  if (k === "escape" || k === "p") pauseKeyDown = false;
+});
+// tabbing away pauses, rather than wolves eating the sheep while you're gone
+window.addEventListener("blur", () => {
+  for (const k in keys) keys[k] = false;   // a missed keyup would stick a direction on
+  pauseKeyDown = false;
+  if (state === "play" && !paused) togglePause();
+});
 
 canvas.addEventListener("contextmenu", e => e.preventDefault());
 canvas.addEventListener("mousemove", e => {
@@ -313,6 +326,7 @@ canvas.addEventListener("mousemove", e => {
 });
 canvas.addEventListener("mousedown", e => {
   ac(); if (audioCtx.state === "suspended") audioCtx.resume().then(startMusic); else startMusic();
+  if (paused) { if (e.button === 0) togglePause(); return; }
   if (e.button === 0) { mouse.left = true; swingEdge = true; }
   if (e.button === 2) { mouse.right = true; gateEdge = true; }
   if (state === "over") newRun();
@@ -323,7 +337,7 @@ window.addEventListener("mouseup", e => {
 });
 
 // gamepad: left stick moves, A swings
-let padActionPrev = false, padGatePrev = false, padShooPrev = false;
+let padActionPrev = false, padGatePrev = false, padShooPrev = false, padPausePrev = false;
 function readPad() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
   for (const p of pads) {
@@ -335,6 +349,9 @@ function readPad() {
     const a = p.buttons[0] && p.buttons[0].pressed;
     const b = p.buttons[1] && p.buttons[1].pressed;
     const xb = p.buttons[2] && p.buttons[2].pressed;
+    const st = p.buttons[9] && p.buttons[9].pressed;
+    if (st && !padPausePrev && state === "play") togglePause();
+    padPausePrev = st;
     if (a && !padActionPrev) swingEdge = true;
     if (b && !padGatePrev) gateEdge = true;
     if (xb && !padShooPrev) shooEdge = true;
@@ -356,6 +373,12 @@ function moveVector() {
   dx += pad.x; dy += pad.y;
   const len = Math.hypot(dx, dy);
   return len > 1 ? { x: dx/len, y: dy/len, len: 1 } : { x: dx, y: dy, len };
+}
+
+function togglePause() {
+  paused = !paused;
+  // don't let a queued press fire the instant you unpause
+  swingEdge = gateEdge = shooEdge = false;
 }
 
 function nearGate() {
@@ -453,6 +476,7 @@ function update() {
 
   const sw = swingEdge, gt = gateEdge, sh = shooEdge;
   swingEdge = false; gateEdge = false; shooEdge = false;
+  if (paused) { readPad(); return; }          // world frozen, pad still polled
   if (state !== "play") { readPad(); return; }
   if (gt) useGate();
   if (sh) shoo();
@@ -850,6 +874,18 @@ function drawHUD() {
     ctx.fillStyle = alert.color; ctx.font = "bold 24px monospace";
     ctx.fillText(alert.text, VW/2, 126);
     ctx.globalAlpha = 1;
+  }
+
+  if (paused && state === "play") {
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(0,0,0,0.62)"; ctx.fillRect(0,0,VW,VH);
+    ctx.fillStyle = "#e8e8e8"; ctx.font = "bold 40px monospace";
+    ctx.fillText("PAUSED", VW/2, VH/2 - 30);
+    ctx.font = "14px monospace"; ctx.fillStyle = "#8fa88f";
+    ctx.fillText("ESC / P / START — or click — to carry on", VW/2, VH/2 + 4);
+    ctx.fillStyle = "#5a6a5a"; ctx.font = "12px monospace";
+    ctx.fillText("WASD move  ·  LMB or SPACE swing  ·  RMB or E gate  ·  Q shoo", VW/2, VH/2 + 34);
+    ctx.textAlign = "left";
   }
 
   if (state === "over") {
