@@ -39,6 +39,10 @@ const ZOOM = 1.5;
 const VIEW_W = VW / ZOOM, VIEW_H = VH / ZOOM;
 
 // ---------------- ASSETS ----------------
+// Sprites are drawn and exported at 1x — the game scales them up, so
+// there is no export-size step in Aseprite. fw/fh below are the SOURCE
+// frame size (what you draw on); ART_SCALE decides how big they appear.
+const ART_SCALE = 2;
 const strips = {};
 function loadStrip(name, file, frames, fw, fh) {
   const img = new Image();
@@ -55,15 +59,34 @@ function loadImage(name, file) {
 }
 const S = "assets/sprites/", Wd = "assets/world/", A = "assets/audio/";
 ["down","up","side"].forEach(d => {
-  loadStrip("farmer-idle-"+d, S+"farmer-idle-"+d+".png", 2, 48, 48);
-  loadStrip("farmer-walk-"+d, S+"farmer-walk-"+d+".png", 4, 48, 48);
-  loadStrip("sheep-idle-"+d,  S+"sheep-idle-"+d+".png",  2, 40, 40);
-  loadStrip("sheep-walk-"+d,  S+"sheep-walk-"+d+".png",  4, 40, 40);
-  loadStrip("wolf-walk-"+d,   S+"wolf-walk-"+d+".png",   4, 48, 48);
+  loadStrip("farmer-idle-"+d, S+"farmer-idle-"+d+".png", 2, 24, 24);
+  loadStrip("farmer-walk-"+d, S+"farmer-walk-"+d+".png", 4, 24, 24);
+  loadStrip("sheep-idle-"+d,  S+"sheep-idle-"+d+".png",  2, 20, 20);
+  loadStrip("sheep-walk-"+d,  S+"sheep-walk-"+d+".png",  4, 20, 20);
+  loadStrip("wolf-walk-"+d,   S+"wolf-walk-"+d+".png",   4, 24, 24);
 });
-loadStrip("sheep-graze", S+"sheep-graze.png", 3, 40, 40);
-loadStrip("wolf-death",  S+"wolf-death.png",  4, 48, 48);
-loadImage("grass", Wd+"grass-tile.png");
+loadStrip("sheep-graze", S+"sheep-graze.png", 3, 20, 20);
+loadStrip("wolf-death",  S+"wolf-death.png",  4, 24, 24);
+// Up to 4 grass variants, picked per tile by a stable hash so the pattern
+// never shimmers as the camera moves. Only grass-tile-1 is required; the
+// others are optional and the mix adapts to however many exist.
+const GRASS_VARIANTS = 4;
+for (let i = 1; i <= GRASS_VARIANTS; i++) loadImage("grass"+i, Wd+"grass-tile-"+i+".png");
+loadImage("grass", Wd+"grass-tile.png");   // legacy single-tile name, still works
+
+// deterministic per-tile pick — same tile always gets the same variant
+function grassAt(tx, ty) {
+  const have = [];
+  for (let i = 1; i <= GRASS_VARIANTS; i++) if (images["grass"+i]) have.push(images["grass"+i]);
+  if (!have.length) return images.grass || null;
+  let h = (tx * 73856093) ^ (ty * 19349663);
+  h = (h ^ (h >>> 13)) >>> 0;
+  // variant 1 is the plain one, so weight it heavily — detail tiles are
+  // accents, not a checkerboard
+  const r = (h % 100) / 100;
+  if (have.length === 1 || r < 0.72) return have[0];
+  return have[1 + (h % (have.length - 1))];
+}
 loadImage("trunk", Wd+"tree-trunk.png");
 loadImage("canopy", Wd+"tree-canopy.png");
 loadImage("fenceH", Wd+"fence-h.png");
@@ -631,10 +654,11 @@ function drawStrip(name, x, y, t, flip, fallback) {
   const s = strips[name];
   if (!s) { fallback(); return; }
   const f = Math.floor(t) % s.frames;
+  const w = s.fw * ART_SCALE, h = s.fh * ART_SCALE;
   ctx.save();
   if (flip) { ctx.translate(x,0); ctx.scale(-1,1); ctx.translate(-x,0); }
   ctx.drawImage(s.img, f*s.fw, 0, s.fw, s.fh,
-                Math.round(x - s.fw/2), Math.round(y - s.fh + 8), s.fw, s.fh);
+                Math.round(x - w/2), Math.round(y - h + 8), w, h);
   ctx.restore();
 }
 
@@ -667,7 +691,8 @@ function drawGround() {
   const x0 = Math.floor(camX/TILE)*TILE, y0 = Math.floor(camY/TILE)*TILE;
   for (let x = x0; x < camX+VIEW_W+TILE; x += TILE)
     for (let y = y0; y < camY+VIEW_H+TILE; y += TILE) {
-      if (images.grass) ctx.drawImage(images.grass, x, y, TILE, TILE);
+      const g = grassAt(x/TILE, y/TILE);
+      if (g) ctx.drawImage(g, x, y, TILE, TILE);   // 32x32 source -> 64px tile
       else { ctx.fillStyle = ((x/TILE + y/TILE) % 2) ? "#2f4a2a" : "#33502d";
              ctx.fillRect(x, y, TILE, TILE); }
     }
@@ -711,13 +736,13 @@ function drawFence() {
 }
 
 function drawTrunk(t) {
-  if (images.trunk) ctx.drawImage(images.trunk, t.x-24, t.y-56, 48, 64);
+  if (images.trunk) ctx.drawImage(images.trunk, t.x-24, t.y-56, 48, 64);   // 24x32 source
   else { ctx.fillStyle = "#4a3520"; ctx.fillRect(t.x-7, t.y-34, 14, 38); }
 }
 function drawCanopy(t) {
   const under = Math.hypot(player.x-t.x, player.y-t.y) < 54;
   ctx.globalAlpha = under ? 0.45 : 1;
-  if (images.canopy) ctx.drawImage(images.canopy, t.x-48, t.y-120, 96, 80);
+  if (images.canopy) ctx.drawImage(images.canopy, t.x-48, t.y-120, 96, 80);   // 48x40 source
   else {
     ctx.fillStyle = "#1f3a1c";
     ctx.beginPath(); ctx.arc(t.x, t.y-58, 34, 0, 7); ctx.fill();

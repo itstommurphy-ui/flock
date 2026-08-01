@@ -146,11 +146,12 @@ Rough priority order.
 ## 8. Art Spec
 
 ### The rule
-**Draw at 1× in Aseprite, export at 2×. The game draws the exported
-file 1:1.** So a 24×24 drawing becomes a 48×48 PNG and appears 48px on
-screen. Chunky 2px-per-pixel, consistent with everything else.
+**Draw at the canvas size below and export at 1× — there is NO scaling
+step.** The game scales sprites up on draw (ART_SCALE = 2), so a 24×24
+drawing appears 48px on screen. Image smoothing is off, so it stays crisp.
 
-Image smoothing is off in code, so nothing blurs.
+Aseprite: File → Export Sprite Sheet → Sheet Type: Horizontal Strip →
+all padding 0 → Output File into assets/. Ignore any Scale setting.
 
 ### Directions — read this before drawing anything
 - Draw **THREE** directions only: **down (facing camera), up (facing
@@ -171,39 +172,42 @@ code slices it by frame count.
 
 ### v1 ASSET LIST — characters
 
-| File | Draw | Export | Frames | Notes |
+| File | Canvas (draw this) | Frames | Exported file | Notes |
 |---|---|---|---|---|
-| farmer-idle-down.png | 24×24 | 48×48 | 2 | gentle breathing |
-| farmer-idle-up.png | 24×24 | 48×48 | 2 | |
-| farmer-idle-side.png | 24×24 | 48×48 | 2 | |
-| farmer-walk-down.png | 24×24 | 48×48 | 4 | |
-| farmer-walk-up.png | 24×24 | 48×48 | 4 | |
-| farmer-walk-side.png | 24×24 | 48×48 | 4 | |
-| sheep-idle-down.png | 20×20 | 40×40 | 2 | |
-| sheep-idle-up.png | 20×20 | 40×40 | 2 | |
-| sheep-idle-side.png | 20×20 | 40×40 | 2 | |
-| sheep-walk-down.png | 20×20 | 40×40 | 4 | |
-| sheep-walk-up.png | 20×20 | 40×40 | 4 | |
-| sheep-walk-side.png | 20×20 | 40×40 | 4 | |
-| sheep-graze.png | 20×20 | 40×40 | 3 | head down, munching |
-| wolf-walk-down.png | 24×24 | 48×48 | 4 | |
-| wolf-walk-up.png | 24×24 | 48×48 | 4 | |
-| wolf-walk-side.png | 24×24 | 48×48 | 4 | |
-| wolf-death.png | 24×24 | 48×48 | 4 | one only, all directions |
+| farmer-idle-down.png | 24×24 | 2 | 48×24 | gentle breathing |
+| farmer-idle-up.png | 24×24 | 2 | 48×24 | |
+| farmer-idle-side.png | 24×24 | 2 | 48×24 | |
+| farmer-walk-down.png | 24×24 | 4 | 96×24 | |
+| farmer-walk-up.png | 24×24 | 4 | 96×24 | |
+| farmer-walk-side.png | 24×24 | 4 | 96×24 | |
+| sheep-idle-down.png | 20×20 | 2 | 40×20 | |
+| sheep-idle-up.png | 20×20 | 2 | 40×20 | |
+| sheep-idle-side.png | 20×20 | 2 | 40×20 | |
+| sheep-walk-down.png | 20×20 | 4 | 80×20 | |
+| sheep-walk-up.png | 20×20 | 4 | 80×20 | |
+| sheep-walk-side.png | 20×20 | 4 | 80×20 | |
+| sheep-graze.png | 20×20 | 3 | 60×20 | head down, munching |
+| wolf-walk-down.png | 24×24 | 4 | 96×24 | |
+| wolf-walk-up.png | 24×24 | 4 | 96×24 | |
+| wolf-walk-side.png | 24×24 | 4 | 96×24 | |
+| wolf-death.png | 24×24 | 4 | 96×24 | one only, all directions |
 
 ### v1 ASSET LIST — world
 
-| File | Draw | Export | Notes |
+| File | Canvas (draw this) | Exported file | Notes |
 |---|---|---|---|
-| grass-tile.png | 32×32 | 64×64 | must tile seamlessly — edges match |
-| tree-trunk.png | 24×32 | 48×64 | solid, blocks movement, Y-sorted |
-| tree-canopy.png | 48×40 | 96×80 | drawn over everything, fades when under |
-| fence-h.png | 16×16 | 32×32 | horizontal run, tileable |
-| fence-v.png | 16×16 | 32×32 | vertical run, tileable |
-| fence-corner.png | 16×16 | 32×32 | |
-| gate-closed.png | 32×16 | 64×32 | |
-| gate-open.png | 32×16 | 64×32 | |
-| props.png | 16×16 each | 32×32 | strip of scatter: flower, litter, a shoe, a rock, a bush |
+| grass-tile-1.png | 32×32 | 32×32 | PLAIN base grass — ~72% of the ground. Keep it quiet and low-contrast |
+| grass-tile-2.png | 32×32 | 32×32 | Optional accent — a few tufts or a slightly different shade |
+| grass-tile-3.png | 32×32 | 32×32 | Optional accent — e.g. tiny flowers, a worn patch |
+| grass-tile-4.png | 32×32 | 32×32 | Optional accent |
+| tree-trunk.png | 24×32 | 24×32 | solid, blocks movement, Y-sorted |
+| tree-canopy.png | 48×40 | 48×40 | drawn over everything, fades when under |
+| fence-h.png | 16×16 | 16×16 | horizontal run, tileable |
+| fence-v.png | 16×16 | 16×16 | vertical run, tileable |
+| fence-corner.png | 16×16 | 16×16 | |
+| gate-closed.png | 32×16 | 32×16 | |
+| gate-open.png | 32×16 | 32×16 | |
+| props.png | 16×16 each | 16×16 each | strip of scatter: flower, litter, a shoe, a rock, a bush |
 
 Optional but cheap and adds a lot: a second tree variant, a dirt-patch
 tile, a puddle.
