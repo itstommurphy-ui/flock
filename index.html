@@ -62,8 +62,8 @@ const S = "assets/sprites/", Wd = "assets/world/", A = "assets/audio/";
 ["down","up","side"].forEach(d => {
   loadStrip("farmer-idle-"+d, S+"farmer-idle-"+d+".png", 2, 24, 24);
   loadStrip("farmer-walk-"+d, S+"farmer-walk-"+d+".png", 4, 24, 24);
-  loadStrip("sheep-idle-"+d,  S+"sheep-idle-"+d+".png",  2, 20, 20);
-  loadStrip("sheep-walk-"+d,  S+"sheep-walk-"+d+".png",  4, 20, 20);
+  loadStrip("sheep-idle", S+"sheep-idle.png", 4, 20, 20);
+  loadStrip("sheep-walk", S+"sheep-walk.png", 4, 20, 20);
   loadStrip("wolf-walk-"+d,   S+"wolf-walk-"+d+".png",   4, 24, 24);
 });
 loadStrip("sheep-graze", S+"sheep-graze.png", 3, 20, 20);
@@ -558,7 +558,13 @@ function updateSheep() {
   const dx = s.tx - s.x, dy = s.ty - s.y, d = Math.hypot(dx, dy);
   const stopAt = s.state === "herded" ? 40 : 8;
   if (d > stopAt) {
-    s.face = faceFrom(dx, dy); s.flip = dx < 0;
+    s.face = faceFrom(dx, dy);
+
+// Only flip if we're moving clearly left or right.
+// Small steering adjustments won't make the sheep flicker.
+if (Math.abs(dx) > 8) {
+    s.flip = dx < 0;
+}
     moveAI(s, dx, dy, sp); s.moving = true;
   } else s.moving = false;
 
@@ -804,8 +810,8 @@ function drawPlayer() {
 function drawSheep() {
   const s = sheep;
   const anim = s.moving ? "walk" : (s.state === "graze" ? "graze" : "idle");
-  const key = anim === "graze" ? "sheep-graze" : "sheep-"+anim+"-"+s.face;
-  drawStrip(key, s.x, s.y, frame/(s.moving?8:24), s.face === "side" && s.flip,
+  const key = anim === "graze" ? "sheep-graze" : "sheep-" + anim;
+  drawStrip(key, s.x, s.y, frame/(s.moving?8:24), s.flip,
     () => {
       ctx.fillStyle = s.hurt > 0 && frame%6 < 3 ? "#ff9c9c" : "#f2efe6";
       ctx.fillRect(s.x-12, s.y-22, 24, 22);
