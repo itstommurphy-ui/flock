@@ -85,26 +85,58 @@ function loadSound(name, file) {
     .then(b => ac().decodeAudioData(b))
     .then(b => { buffers[name] = b; }).catch(() => {});
 }
-// Music: decoded into a buffer and looped, so the wrap point is seamless.
-// Can't start until the player clicks — browsers block audio before a gesture.
-let musicBuf = null, musicSrc = null, musicStarted = false;
-fetch(A + "music-loop.wav")
-  .then(r => { if (!r.ok) throw 0; return r.arrayBuffer(); })
-  .then(b => ac().decodeAudioData(b))
-  .then(b => { musicBuf = b; startMusic(); })
-  .catch(() => {});
+// Music: a 3-bar intro that hands straight over to a seamless loop.
+// Both are decoded into buffers and scheduled back to back on the audio
+// clock, so the join is sample-exact — no gap, no overlap.
+// Can't start until the player clicks: browsers block audio before a gesture.
+let musicIntroBuf = null, musicBuf = null, musicStarted = false;
+let musicIntroSrc = null, musicSrc = null;
+
+function loadMusic(file, set) {
+  fetch(A + file)
+    .then(r => { if (!r.ok) throw 0; return r.arrayBuffer(); })
+    .then(b => ac().decodeAudioData(b))
+    .then(b => { set(b); startMusic(); })
+    .catch(() => {});
+}
+loadMusic("music-intro.wav", b => { musicIntroBuf = b; });
+loadMusic("music-loop.wav",  b => { musicBuf = b; });
 
 function startMusic() {
   if (musicStarted || !musicBuf || !audioCtx) return;
   if (audioCtx.state === "suspended") return;   // still waiting on a click
+  // if an intro file exists, wait for it — otherwise just start the loop
+  if (musicIntroBuf === null && introPending()) return;
   musicStarted = true;
+
   const g = audioCtx.createGain();
   g.gain.value = 0.32;
+  g.connect(audioCtx.destination);
+
+  const t0 = audioCtx.currentTime + 0.05;
+  let loopAt = t0;
+
+  if (musicIntroBuf) {
+    musicIntroSrc = audioCtx.createBufferSource();
+    musicIntroSrc.buffer = musicIntroBuf;
+    musicIntroSrc.connect(g);
+    musicIntroSrc.start(t0);
+    loopAt = t0 + musicIntroBuf.duration;   // loop begins the instant it ends
+  }
+
   musicSrc = audioCtx.createBufferSource();
   musicSrc.buffer = musicBuf;
   musicSrc.loop = true;
-  musicSrc.connect(g).connect(audioCtx.destination);
-  musicSrc.start();
+  musicSrc.connect(g);
+  musicSrc.start(loopAt);
+}
+
+// Give the intro a moment to arrive before starting without it, so a slow
+// fetch doesn't mean the loop begins bare.
+let introDeadline = null;
+function introPending() {
+  if (introDeadline === null) introDeadline = Date.now() + 2500;
+  return Date.now() < introDeadline;
 }
 
 ["sfx-bleat-calm-1","sfx-bleat-calm-2",

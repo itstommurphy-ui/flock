@@ -221,7 +221,8 @@ tile, a puddle.
 | sfx-fence-hit.wav | wood taking damage |
 | sfx-gate.wav | open/close |
 | sfx-wave-start.wav | |
-| music-loop.wav | one track for now |
+| music-intro.wav | 3-bar intro, plays once at the start |
+| music-loop.wav | main loop — must join seamlessly from the end of the intro |
 
 ### Craft notes
 - **Pick a palette first and stay in it.** 12–16 colours for the whole
