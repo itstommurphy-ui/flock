@@ -180,12 +180,8 @@ code slices it by frame count.
 | farmer-walk-down.png | 24×24 | 4 | 96×24 | |
 | farmer-walk-up.png | 24×24 | 4 | 96×24 | |
 | farmer-walk-side.png | 24×24 | 4 | 96×24 | |
-| sheep-idle-down.png | 20×20 | 2 | 40×20 | |
-| sheep-idle-up.png | 20×20 | 2 | 40×20 | |
-| sheep-idle-side.png | 20×20 | 2 | 40×20 | |
-| sheep-walk-down.png | 20×20 | 4 | 80×20 | |
-| sheep-walk-up.png | 20×20 | 4 | 80×20 | |
-| sheep-walk-side.png | 20×20 | 4 | 80×20 | |
+| sheep-idle.png | 20×20 | 4 | 80×20 | ONE strip, no directions — designer's call |
+| sheep-walk.png | 20×20 | 4 | 80×20 | ONE strip, mirrored for left |
 | sheep-graze.png | 20×20 | 3 | 60×20 | head down, munching |
 | wolf-walk-down.png | 24×24 | 4 | 96×24 | |
 | wolf-walk-up.png | 24×24 | 4 | 96×24 | |
@@ -297,6 +293,13 @@ noted, not yet addressed.
 - 2026-07: Tone deliberately undecided. NOT assumed comedy.
 - 2026-07: Controls settled — WASD/arrows/stick move, LMB/SPACE/A swing,
   RMB/E/B gate, Q/pad-X shoo. All schemes live at once, no menu toggle.
+- 2026-07: Sheep uses a SINGLE idle and walk strip (no up/down variants),
+  mirrored for left. Designer's call after drawing it — a sheep reads fine
+  side-on from any angle.
+- 2026-07: Facing is STICKY (setFacing). Straight `flip = dx < 0` made
+  animals strobe left/right when nudging around a target — measured 326
+  flips in 600 frames of jitter, now 0, while a genuine turn still takes
+  10 frames. Applies to player, sheep and wolves.
 - 2026-07: PAUSE on ESC / P / gamepad START. Freezes the whole world,
   overlay lists the controls, click or press again to resume. Window blur
   auto-pauses AND clears held keys (a swallowed keyup would otherwise

@@ -447,6 +447,21 @@ function faceFrom(dx, dy) {
   return dy < 0 ? "up" : "down";
 }
 
+// Sticky left/right facing. An entity nudging around its target crosses
+// zero every other frame, which flips the sprite dozens of times a second.
+// A new direction only wins once it has held for several frames running.
+const FLIP_HOLD = 10;     // frames of agreement before the sprite turns
+const FLIP_DEAD = 0.6;    // below this, movement is basically vertical
+function setFacing(e, dx) {
+  if (e.flipWant === undefined) { e.flipWant = !!e.flip; e.flipHold = 0; }
+  if (Math.abs(dx) < FLIP_DEAD) return;          // keep whatever we had
+  const want = dx < 0;
+  if (want === e.flip) { e.flipHold = 0; return; }
+  if (want === e.flipWant) {
+    if (++e.flipHold >= FLIP_HOLD) { e.flip = want; e.flipHold = 0; }
+  } else { e.flipWant = want; e.flipHold = 1; }
+}
+
 // AI steering. Walking straight at a target jams animals against trees
 // forever, so if the direct line is blocked, fan out and take the first
 // angle that isn't. Crude, but enough for open woodland.
@@ -496,7 +511,7 @@ function updatePlayer() {
   player.moving = m.len > 0.05;
   if (player.moving) {
     player.face = faceFrom(m.x, m.y);
-    player.flip = m.x < 0;
+    setFacing(player, m.x * 10);   // input is a unit vector, scale to match
     moveEntity(player, m.x * sp, m.y * sp);
   }
   if (player.swing > 0) player.swing--;
@@ -558,13 +573,7 @@ function updateSheep() {
   const dx = s.tx - s.x, dy = s.ty - s.y, d = Math.hypot(dx, dy);
   const stopAt = s.state === "herded" ? 40 : 8;
   if (d > stopAt) {
-    s.face = faceFrom(dx, dy);
-
-// Only flip if we're moving clearly left or right.
-// Small steering adjustments won't make the sheep flicker.
-if (Math.abs(dx) > 8) {
-    s.flip = dx < 0;
-}
+    s.face = faceFrom(dx, dy); setFacing(s, dx);
     moveAI(s, dx, dy, sp); s.moving = true;
   } else s.moving = false;
 
@@ -619,7 +628,7 @@ function updateWolves() {
       const kl = Math.hypot(w.kx, w.ky) || 1;
       moveEntity(w, w.kx/kl*3, w.ky/kl*3); w.knock--;
     } else if (d > reach) {
-      w.face = faceFrom(dx, dy); w.flip = dx < 0;
+      w.face = faceFrom(dx, dy); setFacing(w, dx);
       moveAI(w, dx, dy, w.sp); w.moving = true;
     } else {
       w.moving = false;
@@ -810,7 +819,7 @@ function drawPlayer() {
 function drawSheep() {
   const s = sheep;
   const anim = s.moving ? "walk" : (s.state === "graze" ? "graze" : "idle");
-  const key = anim === "graze" ? "sheep-graze" : "sheep-" + anim;
+  const key = anim === "graze" ? "sheep-graze" : "sheep-"+anim;
   drawStrip(key, s.x, s.y, frame/(s.moving?8:24), s.flip,
     () => {
       ctx.fillStyle = s.hurt > 0 && frame%6 < 3 ? "#ff9c9c" : "#f2efe6";
