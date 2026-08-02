@@ -72,9 +72,9 @@ const ANIM = {
   "farmer-idle-down": { frames: 2,  speed: 34, w: 24, h: 24 },
   "farmer-idle-up":   { frames: 2,  speed: 34, w: 24, h: 24 },
   "farmer-idle-side": { frames: 2,  speed: 34, w: 24, h: 24 },
-  "farmer-walk-down": { frames: 4,  speed: 8,  w: 24, h: 24 },
-  "farmer-walk-up":   { frames: 4,  speed: 8,  w: 24, h: 24 },
-  "farmer-walk-side": { frames: 4,  speed: 8,  w: 24, h: 24 },
+  "farmer-walk-down": { frames: 4,  speed: 5,  w: 24, h: 24 },
+  "farmer-walk-up":   { frames: 4,  speed: 5,  w: 24, h: 24 },
+  "farmer-walk-side": { frames: 4,  speed: 5,  w: 24, h: 24 },
 
   "sheep-idle":       { frames: 5,  speed: 45, w: 20, h: 20 },   // slowest
   "sheep-graze":      { frames: 3,  speed: 30, w: 20, h: 20 },   // slow munching
@@ -136,7 +136,8 @@ function loadSound(name, file) {
 // clock, so the join is sample-exact — no gap, no overlap.
 // Can't start until the player clicks: browsers block audio before a gesture.
 let musicIntroBuf = null, musicBuf = null, musicStarted = false;
-let musicIntroSrc = null, musicSrc = null;
+let musicIntroSrc = null, musicSrc = null, musicGain = null;
+const MUSIC_VOL = 0.32;
 
 function loadMusic(file, set) {
   fetch(A + file)
@@ -156,8 +157,9 @@ function startMusic() {
   musicStarted = true;
 
   const g = audioCtx.createGain();
-  g.gain.value = 0.32;
+  g.gain.value = muted ? 0 : MUSIC_VOL;
   g.connect(audioCtx.destination);
+  musicGain = g;
 
   const t0 = audioCtx.currentTime + 0.05;
   let loopAt = t0;
@@ -266,7 +268,9 @@ function gateRect() {
 function segSolid(f) { return f.gate ? gateClosed : f.hp > 0; }
 
 // ---------------- STATE ----------------
-let player, sheep, wolves = [], trees = [], props = [];
+let player, flock = [], wolves = [], trees = [], props = [];
+const START_SHEEP = 3;      // how many you begin with
+function livingSheep() { return flock.filter(s => s.alive); }
 let wave = 0, waveState = "idle", waveTimer = 0, state = "play";
 let alert = null, frame = 0, camX = 0, camY = 0, shake = 0, bleatCue = null;
 
@@ -276,10 +280,18 @@ function newRun() {
              face:"down", moving:false, swing:0, swingCd:0, hurt:0, flip:false,
              wasInPen:false };
   farmerLine = null;
-  sheep  = { x: PEN.x+PEN.w/2, y: PEN.y+PEN.h/2, r:11, hp:3, maxHp:3,
-             face:"down", state:"graze", tx:0, ty:0, timer:120,
-             herded:0, bleat:90, hurt:0, alive:true, flip:false, moving:false,
-             wasInPen:true, settled:0 };
+  flock = [];
+  for (let i = 0; i < START_SHEEP; i++) {
+    // spread them across the pen so they don't start stacked
+    const a = (i / START_SHEEP) * Math.PI * 2;
+    flock.push({ id: i,
+      x: PEN.x + PEN.w/2 + Math.cos(a) * 60,
+      y: PEN.y + PEN.h/2 + Math.sin(a) * 44,
+      r:11, hp:3, maxHp:3, face:"down", state:"graze", tx:0, ty:0,
+      timer: 120 + i * 40,          // stagger, so they don't all decide at once
+      herded:0, bleat: 90 + i * 50, hurt:0, alive:true, flip:false,
+      moving:false, wasInPen:true, settled:0 });
+  }
   wolves = []; wave = 0; waveState = "idle"; waveTimer = 150;
   alert = null; bleatCue = null; state = "play"; paused = false;
   scatterWorld();
@@ -316,6 +328,8 @@ const keys = {};
 let mouse = { x:0, y:0, left:false, right:false };
 let swingEdge = false, gateEdge = false, shooEdge = false;   // one-frame press flags
 let paused = false, pauseKeyDown = false;
+let muted = false;
+const MUTE_BTN = { x: VW - 74, y: VH - 32, w: 58, h: 22 };
 
 window.addEventListener("keydown", e => {
   ac(); if (audioCtx.state === "suspended") audioCtx.resume().then(startMusic); else startMusic();
@@ -324,6 +338,7 @@ window.addEventListener("keydown", e => {
   if (!keys[k] && k === " ") swingEdge = true;
   if (!keys[k] && k === "e") gateEdge = true;
   if (!keys[k] && k === "q") shooEdge = true;
+  if (!keys[k] && k === "m") toggleMute();
   if ((k === "escape" || k === "p") && !pauseKeyDown && state === "play") { pauseKeyDown = true; togglePause(); }
   keys[k] = true;
   if (state === "over" && k === "r") newRun();
@@ -348,6 +363,9 @@ canvas.addEventListener("mousemove", e => {
 });
 canvas.addEventListener("mousedown", e => {
   ac(); if (audioCtx.state === "suspended") audioCtx.resume().then(startMusic); else startMusic();
+  if (e.button === 0 &&
+      mouse.x >= MUTE_BTN.x && mouse.x <= MUTE_BTN.x + MUTE_BTN.w &&
+      mouse.y >= MUTE_BTN.y && mouse.y <= MUTE_BTN.y + MUTE_BTN.h) { toggleMute(); return; }
   if (paused) { if (e.button === 0) togglePause(); return; }
   if (e.button === 0) { mouse.left = true; swingEdge = true; }
   if (e.button === 2) { mouse.right = true; gateEdge = true; }
@@ -397,6 +415,11 @@ function moveVector() {
   return len > 1 ? { x: dx/len, y: dy/len, len: 1 } : { x: dx, y: dy, len };
 }
 
+function toggleMute() {
+  muted = !muted;
+  if (musicGain) musicGain.gain.value = muted ? 0 : MUSIC_VOL;
+}
+
 function togglePause() {
   paused = !paused;
   // don't let a queued press fire the instant you unpause
@@ -416,20 +439,17 @@ function useGate() {
 // "Geeet back in there." Stops the sheep trailing you about; if it's in
 // the pen when you say it, it settles and won't wander for a good while.
 function shoo() {
-  if (!sheep.alive || dist(player, sheep) > 150) {
-    farmerSay("...");
-    return;
+  const heard = flock.filter(s => s.alive && dist(player, s) < 150);
+  if (!heard.length) { farmerSay("..."); return; }
+  let anyPenned = false;
+  for (const s of heard) {
+    s.herded = 0;
+    s.state = "graze";
+    s.tx = s.x; s.ty = s.y;
+    if (inPen(s)) { s.settled = rnd(700, 1400); anyPenned = true; }
+    else s.timer = rnd(120, 240);
   }
-  sheep.herded = 0;
-  sheep.state = "graze";
-  sheep.tx = sheep.x; sheep.ty = sheep.y;
-  if (inPen(sheep)) {
-    sheep.settled = rnd(700, 1400);
-    farmerSay("GEEET BACK IN THERE");
-  } else {
-    sheep.timer = rnd(120, 240);
-    farmerSay("STAY THERE THEN");
-  }
+  farmerSay(anyPenned ? "GEEET BACK IN THERE" : "STAY THERE THEN");
 }
 let farmerLine = null;
 function farmerSay(t) { farmerLine = { t, life: 90 }; }
@@ -520,7 +540,7 @@ function update() {
   if (sw) swing();
 
   updatePlayer();
-  updateSheep();
+  for (const s of flock) updateSheep(s);
   updateWolves();
   updateWaves();
 
@@ -533,35 +553,42 @@ function updatePlayer() {
   player.moving = m.len > 0.05;
   if (player.moving) {
     player.face = faceFrom(m.x, m.y);
-    setFacing(player, m.x * 10);   // input is a unit vector, scale to match
+    // Direct input, so turn instantly. Only the SHEEP needs sticky facing
+    // (it nudges around its target and would otherwise strobe).
+    if (Math.abs(m.x) > 0.15) player.flip = m.x < 0;
     moveEntity(player, m.x * sp, m.y * sp);
   }
   if (player.swing > 0) player.swing--;
   if (player.swingCd > 0) player.swingCd--;
   if (player.hurt > 0) player.hurt--;
 
-  // walking over the sheep gathers it — unless you've just told it to stay
-  if (sheep.alive && sheep.settled <= 0 && dist(player, sheep) < 34) {
-    if (sheep.herded <= 0) sheep.state = "herded";
-    sheep.herded = 300;
+  // walking over a sheep gathers it — unless you've just told it to stay
+  for (const s of flock) {
+    if (!s.alive || s.settled > 0) continue;
+    if (dist(player, s) < 34) {
+      if (s.herded <= 0) s.state = "herded";
+      s.herded = 300;
+    }
   }
 
-  // it doesn't trail you out of the pen every time — sometimes it can't be
-  // bothered, which is worth checking before you jog off into the woods
+  // they don't trail you out of the pen every time — each decides for
+  // itself, so you might lead one out and leave two behind
   const pIn = inPen(player);
-  if (player.wasInPen && !pIn && sheep.herded > 0 && inPen(sheep)) {
-    if (Math.random() < 0.5) {
-      sheep.herded = 0; sheep.state = "graze";
-      sheep.tx = sheep.x; sheep.ty = sheep.y;
-      sheep.settled = rnd(300, 700);
+  if (player.wasInPen && !pIn) {
+    for (const s of flock) {
+      if (!s.alive || s.herded <= 0 || !inPen(s)) continue;
+      if (Math.random() < 0.5) {
+        s.herded = 0; s.state = "graze";
+        s.tx = s.x; s.ty = s.y;
+        s.settled = rnd(300, 700);
+      }
     }
   }
   player.wasInPen = pIn;
 }
 
-function updateSheep() {
-  if (!sheep.alive) return;
-  const s = sheep;
+function updateSheep(s) {
+  if (!s.alive) return;
   if (s.hurt > 0) s.hurt--;
   if (s.herded > 0) s.herded--;
   if (s.settled > 0) s.settled--;
@@ -571,8 +598,15 @@ function updateSheep() {
 
   if (scare) {
     s.state = "flee";
-    const a = Math.atan2(s.y - scare.y, s.x - scare.x);
-    s.tx = s.x + Math.cos(a)*200; s.ty = s.y + Math.sin(a)*200;
+    // run for the pen if it's open and safe-ish, otherwise straight away
+    // from the wolf — sheep aren't clever, but they aren't suicidal either
+    const penSafe = penHoles() === 0 && !gateClosed;
+    if (penSafe && !inPen(s) && dist(s, { x: PEN.x+PEN.w/2, y: PEN.y+PEN.h }) < 460) {
+      s.tx = PEN.x + PEN.w/2; s.ty = PEN.y + PEN.h - 30;
+    } else {
+      const a = Math.atan2(s.y - scare.y, s.x - scare.x);
+      s.tx = s.x + Math.cos(a)*200; s.ty = s.y + Math.sin(a)*200;
+    }
   } else if (s.herded > 0) {
     s.state = "herded"; s.tx = player.x; s.ty = player.y;
   } else if (--s.timer <= 0) {
@@ -605,11 +639,15 @@ function updateSheep() {
 
   // the alert fires on the moment it crosses out, not on a whim
   s.wasInPen = inPen(s);
-  if (wasIn && !s.wasInPen && s.herded <= 0)
-    say("THE SHEEP HAS WANDERED OFF!", "#f5d76e");
+  if (wasIn && !s.wasInPen && s.herded <= 0) {
+    const loose = flock.filter(o => o.alive && !inPen(o)).length;
+    say(loose > 1 ? "ANOTHER ONE'S OFF! (" + loose + " LOOSE)"
+                  : "A SHEEP HAS WANDERED OFF!", "#f5d76e");
+  }
 
   // Bleating. Calm = occasional and slow. Panic = a wolf is close, or one
   // is loose inside the pen — frequent, higher, and it flags a direction.
+  // panic is judged per sheep — one can be terrified while another grazes
   const wolfNear = wolves.some(w => !w.dead && dist(w, s) < 260);
   const wolfInPen = wolves.some(w => !w.dead && inPen(w));
   const panicking = wolfNear || (inPen(s) && wolfInPen);
@@ -633,8 +671,16 @@ function updateWolves() {
   for (const w of wolves) {
     if (w.dead) { w.deathT++; continue; }
     let target = null, kind = "";
-    const exposed = sheep.alive && (!inPen(sheep) || !gateClosed || penHoles() > 0);
-    if (exposed) { target = sheep; kind = "sheep"; }
+    // nearest sheep it can actually reach — a breached or open pen means
+    // even penned sheep are fair game
+    let prey = null, pd = 1e9;
+    for (const s of flock) {
+      if (!s.alive) continue;
+      if (inPen(s) && gateClosed && penHoles() === 0) continue;
+      const d = dist(w, s);
+      if (d < pd) { pd = d; prey = s; }
+    }
+    if (prey) { target = prey; kind = "sheep"; }
     else if (dist(w, player) < 420) { target = player; kind = "player"; }
     else {
       let best = null, bd = 1e9;
@@ -654,16 +700,22 @@ function updateWolves() {
       const kl = Math.hypot(w.kx, w.ky) || 1;
       moveEntity(w, w.kx/kl*3, w.ky/kl*3); w.knock--;
     } else if (d > reach) {
-      w.face = faceFrom(dx, dy); setFacing(w, dx);
+      w.face = faceFrom(dx, dy);
+      if (Math.abs(dx) > 4) w.flip = dx < 0;
       moveAI(w, dx, dy, w.sp); w.moving = true;
     } else {
       w.moving = false;
       if (--w.atk <= 0) {
         w.atk = 45;
         if (kind === "sheep") {
-          sheep.hp--; sheep.hurt = 20; shake = 5;
-          playAt("sfx-hit", sheep.x, sheep.y, 1);
-          if (sheep.hp <= 0) { sheep.alive = false; say("THE SHEEP IS GONE.", "#ff6b6b", 240); state = "over"; }
+          target.hp--; target.hurt = 20; shake = 5;
+          playAt("sfx-hit", target.x, target.y, 1);
+          if (target.hp <= 0) {
+            target.alive = false;
+            const left = livingSheep().length;
+            if (left === 0) { say("THE FLOCK IS GONE.", "#ff6b6b", 240); state = "over"; }
+            else say("YOU LOST A SHEEP. " + left + " LEFT.", "#ff6b6b", 200);
+          }
         } else if (kind === "player") {
           player.hp--; player.hurt = 30; shake = 7;
           playAt("sfx-hit", player.x, player.y, 1);
@@ -745,7 +797,7 @@ function draw() {
   const list = [];
   for (const t of trees) list.push({ y:t.y, f:() => drawTrunk(t) });
   for (const w of wolves) list.push({ y:w.y, f:() => drawWolf(w) });
-  if (sheep.alive) list.push({ y:sheep.y, f:drawSheep });
+  for (const s of flock) if (s.alive) list.push({ y:s.y, f:() => drawSheep(s) });
   list.push({ y:player.y, f:drawPlayer });
   list.sort((a,b) => a.y - b.y);
   for (const d of list) d.f();
@@ -846,8 +898,7 @@ function drawPlayer() {
   }
 }
 
-function drawSheep() {
-  const s = sheep;
+function drawSheep(s) {
   const anim = s.moving ? "walk" : (s.state === "graze" ? "graze" : "idle");
   const key = anim === "graze" ? "sheep-graze" : "sheep-"+anim;
   drawStrip(key, s.x, s.y, frame, s.flip,
@@ -894,11 +945,27 @@ function drawHUD() {
   ctx.fillStyle = broken ? "#ff9f43" : "#8fa88f"; ctx.font = "12px monospace";
   ctx.fillText("PEN " + (total-broken) + "/" + total + (gateClosed ? "  GATE SHUT" : "  GATE OPEN"), 16, 68);
 
-  if (sheep.alive) {
+  // music toggle, bottom right
+  ctx.textAlign = "center";
+  ctx.fillStyle = muted ? "#3a2a2a" : "#28382a";
+  ctx.fillRect(MUTE_BTN.x, MUTE_BTN.y, MUTE_BTN.w, MUTE_BTN.h);
+  ctx.strokeStyle = "#44554a"; ctx.lineWidth = 1;
+  ctx.strokeRect(MUTE_BTN.x, MUTE_BTN.y, MUTE_BTN.w, MUTE_BTN.h);
+  ctx.fillStyle = muted ? "#ff9f43" : "#8fa88f"; ctx.font = "11px monospace";
+  ctx.fillText(muted ? "MUTED" : "MUSIC", MUTE_BTN.x + MUTE_BTN.w/2, MUTE_BTN.y + 15);
+
+  const alive = livingSheep();
+  if (alive.length) {
     ctx.textAlign = "right";
-    const out = !inPen(sheep);
-    ctx.fillStyle = out ? "#ffe66d" : "#8fa88f"; ctx.font = "12px monospace";
-    ctx.fillText(out ? "SHEEP LOOSE — " + Math.round(dist(player,sheep)) + "m" : "SHEEP PENNED", VW-16, 26);
+    const loose = alive.filter(s => !inPen(s));
+    ctx.fillStyle = "#8fa88f"; ctx.font = "bold 14px monospace";
+    ctx.fillText("FLOCK " + alive.length + "/" + START_SHEEP, VW-16, 26);
+    if (loose.length) {
+      let nd = 1e9;
+      for (const s of loose) { const d = dist(player, s); if (d < nd) nd = d; }
+      ctx.fillStyle = "#ffe66d"; ctx.font = "12px monospace";
+      ctx.fillText(loose.length + " LOOSE — nearest " + Math.round(nd) + "m", VW-16, 46);
+    }
   }
 
   if (bleatCue) {
@@ -944,7 +1011,7 @@ function drawHUD() {
 
   ctx.textAlign = "left";
   ctx.fillStyle = "#5a6a5a"; ctx.font = "11px monospace";
-  ctx.fillText("WASD/arrows/stick move  ·  LMB/SPACE swing  ·  RMB/E gate  ·  Q shoo", 16, VH-14);
+  ctx.fillText("WASD move · LMB/SPACE swing · RMB/E gate · Q shoo · M mute · ESC pause", 16, VH-14);
 }
 
 newRun();

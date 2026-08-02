@@ -64,6 +64,21 @@ You hear it bleating somewhere in the woods.
 If yes, everything in the backlog is content on a proven foundation.
 If no, we've lost a day instead of a week.
 
+### v1.1 — the flock (built)
+- START_SHEEP = 3, one constant at the top of the code
+- Each sheep is fully independent: its own wander timer, bleat clock,
+  panic state, herding and settle
+- Losing one does NOT end the run — it ends when the last one goes
+- Wolves pick the nearest REACHABLE sheep, so a scattered flock splits
+  their attention
+- Shoo affects every sheep within earshot at once
+- Frightened sheep run for the pen if the gate is open and it's intact,
+  otherwise directly away from the wolf
+- HUD shows FLOCK n/3 and how many are loose
+- Playtest sim: with one sheep the player never lost a heart. With three,
+  the same sim loses the whole flock roughly half the time. The mechanic
+  scales the difficulty by itself.
+
 ### v1 systems needed
 - Top-down movement, camera follows player
 - Y-sorting (see §5)
