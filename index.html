@@ -59,15 +59,37 @@ function loadImage(name, file) {
   img.src = file;
 }
 const S = "assets/sprites/", Wd = "assets/world/", A = "assets/audio/";
-["down","up","side"].forEach(d => {
-  loadStrip("farmer-idle-"+d, S+"farmer-idle-"+d+".png", 2, 24, 24);
-  loadStrip("farmer-walk-"+d, S+"farmer-walk-"+d+".png", 4, 24, 24);
-  loadStrip("sheep-idle", S+"sheep-idle.png", 4, 20, 20);
-  loadStrip("sheep-walk", S+"sheep-walk.png", 4, 20, 20);
-  loadStrip("wolf-walk-"+d,   S+"wolf-walk-"+d+".png",   10, 24, 24);
-});
-loadStrip("sheep-graze", S+"sheep-graze.png", 3, 20, 20);
-loadStrip("wolf-death",  S+"wolf-death.png",  4, 24, 24);
+
+// ============================================================
+//  ANIMATION TABLE
+//  The only place to touch when art changes. The key IS the filename.
+//    frames = how many frames are in the PNG
+//    speed  = game frames per animation frame. HIGHER = SLOWER.
+//             5 frantic · 8 brisk walk · 30 gentle · 45 barely moving
+//    w, h   = the canvas you DREW on (not the exported file size)
+// ============================================================
+const ANIM = {
+  "farmer-idle-down": { frames: 2,  speed: 34, w: 24, h: 24 },
+  "farmer-idle-up":   { frames: 2,  speed: 34, w: 24, h: 24 },
+  "farmer-idle-side": { frames: 2,  speed: 34, w: 24, h: 24 },
+  "farmer-walk-down": { frames: 4,  speed: 8,  w: 24, h: 24 },
+  "farmer-walk-up":   { frames: 4,  speed: 8,  w: 24, h: 24 },
+  "farmer-walk-side": { frames: 4,  speed: 8,  w: 24, h: 24 },
+
+  "sheep-idle":       { frames: 5,  speed: 45, w: 20, h: 20 },   // slowest
+  "sheep-graze":      { frames: 3,  speed: 30, w: 20, h: 20 },   // slow munching
+  "sheep-walk":       { frames: 4,  speed: 9,  w: 20, h: 20 },
+
+  "wolf-walk-down":   { frames: 10, speed: 5,  w: 24, h: 24 },
+  "wolf-walk-up":     { frames: 6,  speed: 7,  w: 24, h: 24 },
+  "wolf-walk-side":   { frames: 4,  speed: 8,  w: 24, h: 24 },
+  "wolf-death":       { frames: 4,  speed: 10, w: 24, h: 24 }
+};
+
+for (const key in ANIM) {
+  const a = ANIM[key];
+  loadStrip(key, S + key + ".png", a.frames, a.w, a.h);
+}
 // Up to 4 grass variants, picked per tile by a stable hash so the pattern
 // never shimmers as the camera moves. Only grass-tile-1 is required; the
 // others are optional and the mix adapts to however many exist.
@@ -573,7 +595,11 @@ function updateSheep() {
   const dx = s.tx - s.x, dy = s.ty - s.y, d = Math.hypot(dx, dy);
   const stopAt = s.state === "herded" ? 40 : 8;
   if (d > stopAt) {
-    s.face = faceFrom(dx, dy); setFacing(s, dx);
+    s.face = faceFrom(dx, dy);
+    // The sheep has ONE strip, drawn facing right, reused for every
+    // direction — so northwest/southwest must mirror it. Any genuine
+    // leftward component counts, not just mostly-horizontal movement.
+    setFacing(s, dx);
     moveAI(s, dx, dy, sp); s.moving = true;
   } else s.moving = false;
 
@@ -689,10 +715,14 @@ function startWave() {
 function say(text, color, life) { alert = { text, color: color||"#fff", life: life||130 }; }
 
 // ---------------- DRAW ----------------
+// t is a raw clock (normally the global frame counter). Each animation's
+// own speed from ANIM turns it into a frame index, so they all run at
+// their own pace and callers need know nothing about timing.
 function drawStrip(name, x, y, t, flip, fallback) {
   const s = strips[name];
   if (!s) { fallback(); return; }
-  const f = Math.floor(t) % s.frames;
+  const a = ANIM[name];
+  const f = Math.floor(t / (a ? a.speed : 8)) % s.frames;
   const w = s.fw * ART_SCALE, h = s.fh * ART_SCALE;
   ctx.save();
   if (flip) { ctx.translate(x,0); ctx.scale(-1,1); ctx.translate(-x,0); }
@@ -794,7 +824,7 @@ function drawCanopy(t) {
 function drawPlayer() {
   const anim = player.moving ? "walk" : "idle";
   drawStrip("farmer-"+anim+"-"+player.face, player.x, player.y,
-    frame/(player.moving?8:30), player.face === "side" && player.flip,
+    frame, player.face === "side" && player.flip,
     () => {
       ctx.fillStyle = player.hurt > 0 && frame%6 < 3 ? "#fff" : "#d9d0c0";
       ctx.fillRect(player.x-10, player.y-30, 20, 34);
@@ -820,7 +850,7 @@ function drawSheep() {
   const s = sheep;
   const anim = s.moving ? "walk" : (s.state === "graze" ? "graze" : "idle");
   const key = anim === "graze" ? "sheep-graze" : "sheep-"+anim;
-  drawStrip(key, s.x, s.y, frame/(s.moving?8:24), s.flip,
+  drawStrip(key, s.x, s.y, frame, s.flip,
     () => {
       ctx.fillStyle = s.hurt > 0 && frame%6 < 3 ? "#ff9c9c" : "#f2efe6";
       ctx.fillRect(s.x-12, s.y-22, 24, 22);
@@ -840,11 +870,11 @@ function drawSheep() {
 function drawWolf(w) {
   if (w.dead) {
     ctx.globalAlpha = Math.max(0, 1 - w.deathT/60);
-    drawStrip("wolf-death", w.x, w.y, w.deathT/15, w.flip,
+    drawStrip("wolf-death", w.x, w.y, w.deathT, w.flip,
       () => { ctx.fillStyle = "#5a4a4a"; ctx.fillRect(w.x-14, w.y-10, 28, 12); });
     ctx.globalAlpha = 1; return;
   }
-  drawStrip("wolf-walk-"+w.face, w.x, w.y, frame/8, w.face === "side" && w.flip,
+  drawStrip("wolf-walk-"+w.face, w.x, w.y, frame, w.face === "side" && w.flip,
     () => {
       ctx.fillStyle = "#4b4653"; ctx.fillRect(w.x-14, w.y-22, 28, 22);
       ctx.fillStyle = "#d64545"; ctx.fillRect(w.x + (w.flip?-18:10), w.y-20, 8, 5);
