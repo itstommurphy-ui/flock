@@ -188,11 +188,19 @@ function introPending() {
 }
 
 ["sfx-bleat-calm-1","sfx-bleat-calm-2",
- "sfx-bleat-panic-1","sfx-bleat-panic-2","sfx-bleat-panic-3","sfx-punch","sfx-hit",
- "sfx-wolf-growl","sfx-wolf-die","sfx-fence-hit","sfx-gate","sfx-wave-start"
+ "sfx-bleat-panic-1","sfx-bleat-panic-2","sfx-bleat-panic-3",
+ "sfx-wolf-growl-1","sfx-wolf-growl-2","sfx-wolf-growl-3",
+ "sfx-punch","sfx-hit","sfx-wolf-die",
+ "sfx-fence-hit","sfx-fence-break","sfx-gate","sfx-wave-start"
 ].forEach(n => loadSound(n, A + n + ".wav"));
 
-function playAt(name, x, y, baseVol) {
+// Pick one of a numbered set at random: variant("sfx-wolf-growl", 3)
+function variant(base, n) { return base + "-" + (1 + Math.floor(Math.random() * n)); }
+
+// rate: playback speed, which shifts pitch with it. 1 = as recorded.
+// Anything repeated a lot should be given a little spread, or the ear
+// starts hearing "the same file again" rather than "an animal".
+function playAt(name, x, y, baseVol, rate) {
   const c = ac();
   if (c.state === "suspended") c.resume();
   const dx = x - player.x, dy = y - player.y;
@@ -209,12 +217,16 @@ function playAt(name, x, y, baseVol) {
   out.connect(c.destination);
   if (buffers[name]) {
     const src = c.createBufferSource();
-    src.buffer = buffers[name]; src.connect(g); src.start();
-  } else placeholderTone(name, g);
+    src.buffer = buffers[name];
+    src.playbackRate.value = rate || 1;
+    src.connect(g); src.start();
+  } else placeholderTone(name, g, rate || 1);
 }
-function placeholderTone(name, dest) {
+function placeholderTone(name, dest, rate) {
   const c = ac(), t = c.currentTime;
+  const R = rate || 1;
   const tone = (f1, f2, dur, type) => {
+    f1 *= R; f2 *= R; dur /= R;
     const o = c.createOscillator(), e = c.createGain();
     o.type = type || "square";
     o.frequency.setValueAtTime(f1, t);
@@ -227,9 +239,10 @@ function placeholderTone(name, dest) {
   else if (name.startsWith("sfx-bleat-calm")) tone(430, 350, 0.45, "sawtooth");
   else if (name === "sfx-punch") tone(180, 90, 0.08);
   else if (name === "sfx-hit") tone(300, 120, 0.09);
-  else if (name === "sfx-wolf-growl") tone(120, 80, 0.3, "sawtooth");
+  else if (name.startsWith("sfx-wolf-growl")) tone(120, 80, 0.3, "sawtooth");
   else if (name === "sfx-wolf-die") tone(260, 60, 0.3, "sawtooth");
   else if (name === "sfx-fence-hit") tone(220, 150, 0.1);
+  else if (name === "sfx-fence-break") { tone(180, 60, 0.35, "sawtooth"); }
   else if (name === "sfx-gate") tone(400, 500, 0.1);
   else if (name === "sfx-wave-start") tone(300, 600, 0.4);
 }
@@ -457,13 +470,14 @@ function farmerSay(t) { farmerLine = { t, life: 90 }; }
 function swing() {
   if (state !== "play" || player.swingCd > 0) return;
   player.swing = 12; player.swingCd = 22;
-  playAt("sfx-punch", player.x, player.y, 0.5);
+  playAt("sfx-punch", player.x, player.y, 0.5, rnd(0.94, 1.06));
   for (const w of wolves) {
     if (w.dead) continue;
     if (dist(player, w) < 56) {
       w.hp -= 1; w.knock = 10; w.kx = w.x - player.x; w.ky = w.y - player.y;
-      playAt("sfx-hit", w.x, w.y, 0.7);
-      if (w.hp <= 0) { w.dead = true; w.deathT = 0; playAt("sfx-wolf-die", w.x, w.y, 0.8); }
+      playAt("sfx-hit", w.x, w.y, 0.7, rnd(0.92, 1.08));
+      if (w.hp <= 0) { w.dead = true; w.deathT = 0;
+        playAt("sfx-wolf-die", w.x, w.y, 0.8, w.voice * rnd(0.95, 1.05)); }
     }
   }
 }
@@ -652,15 +666,27 @@ function updateSheep(s) {
   const wolfInPen = wolves.some(w => !w.dead && inPen(w));
   const panicking = wolfNear || (inPen(s) && wolfInPen);
   if (--s.bleat <= 0) {
+    // Each sheep keeps its own voice — a fixed pitch offset set once, so
+    // three sheep sound like three animals rather than one file three times.
+    if (s.voice === undefined) s.voice = rnd(0.9, 1.12);
+
     if (panicking) {
-      s.bleat = rnd(70, 130);
-      playAt("sfx-bleat-panic-" + (1 + Math.floor(Math.random()*3)), s.x, s.y, 1);
+      // closer wolf = higher, faster, more often
+      const near = Math.min(...wolves.filter(w => !w.dead).map(w => dist(w, s)).concat([999]));
+      const urgency = clamp(1 - near / 260, 0, 1);          // 0 calm-ish .. 1 wolf on top of it
+      s.bleat = rnd(95, 175) - urgency * 45;
+      playAt(variant("sfx-bleat-panic", 3), s.x, s.y,
+             0.85 + urgency * 0.15,
+             s.voice * (1.04 + urgency * 0.16) * rnd(0.97, 1.03));
       if (dist(player, s) > 240)
         bleatCue = { angle: Math.atan2(s.y-player.y, s.x-player.x), life: 110 };
     } else {
       const out = !inPen(s);
-      s.bleat = out ? rnd(360, 620) : rnd(500, 900);
-      playAt("sfx-bleat-calm-" + (1 + Math.floor(Math.random()*2)), s.x, s.y, out ? 0.6 : 0.35);
+      // penned and content: rare. Loose: a bit more often, slightly higher.
+      s.bleat = out ? rnd(420, 780) : rnd(650, 1200);
+      playAt(variant("sfx-bleat-calm", 2), s.x, s.y,
+             out ? 0.55 : 0.3,
+             s.voice * (out ? 1.02 : 0.96) * rnd(0.95, 1.05));
       if (out && dist(player, s) > 420)
         bleatCue = { angle: Math.atan2(s.y-player.y, s.x-player.x), life: 90 };
     }
@@ -722,8 +748,15 @@ function updateWolves() {
           if (player.hp <= 0) { say("YOU WENT DOWN.", "#ff6b6b", 240); state = "over"; }
         } else {
           target.seg.hp--; shake = 3;
-          playAt("sfx-fence-hit", target.x, target.y, 0.9);
-          if (target.seg.hp <= 0) say("THE PEN IS BREACHED!", "#ff9f43");
+          if (target.seg.hp <= 0) {
+            playAt("sfx-fence-break", target.x, target.y, 1);
+            shake = 8;
+            say("THE PEN IS BREACHED!", "#ff9f43");
+          } else {
+            // pitch rises as the panel weakens — you can hear it going
+            const wear = target.seg.hp / FENCE_HP;
+            playAt("sfx-fence-hit", target.x, target.y, 0.9, 1.25 - wear * 0.3);
+          }
         }
       }
     }
@@ -734,7 +767,13 @@ function updateWolves() {
       w.y = clamp(w.y + Math.sin(a) * w.sp, 20, WORLD_H - 20);
       if (w.stuck > 300) { w.stuck = 0; w.lx = w.x; w.ly = w.y; }
     }
-    if (--w.growl <= 0) { w.growl = rnd(200,500); playAt("sfx-wolf-growl", w.x, w.y, 0.5); }
+    if (--w.growl <= 0) {
+      // with a pack on screen these stack up fast, so space them by how
+      // many wolves are alive and give each its own pitch
+      const pack = wolves.filter(x => !x.dead).length || 1;
+      w.growl = rnd(320, 780) + pack * 40;
+      playAt(variant("sfx-wolf-growl", 3), w.x, w.y, 0.45, w.voice * rnd(0.96, 1.04));
+    }
   }
   wolves = wolves.filter(w => !(w.dead && w.deathT > 60));
 }
@@ -757,7 +796,8 @@ function startWave() {
     else if (edge === 1) { x = rnd(0, WORLD_W); y = WORLD_H-20; }
     else if (edge === 2) { x = 20; y = rnd(0, WORLD_H); }
     else { x = WORLD_W-20; y = rnd(0, WORLD_H); }
-    wolves.push({ x, y, r:13, hp:2, sp:rnd(1.8,2.2), atk:30, growl:rnd(60,300),
+    wolves.push({ x, y, r:13, hp:2, sp:rnd(1.8,2.2), atk:30,
+                  growl:rnd(120,600), voice:rnd(0.85,1.15),
                   face:"down", dead:false, deathT:0, knock:0, flip:false, moving:false,
                   lx:x, ly:y, stuck:0 });
   }

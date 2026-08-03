@@ -308,6 +308,15 @@ noted, not yet addressed.
 - 2026-07: Tone deliberately undecided. NOT assumed comedy.
 - 2026-07: Controls settled — WASD/arrows/stick move, LMB/SPACE/A swing,
   RMB/E/B gate, Q/pad-X shoo. All schemes live at once, no menu toggle.
+- 2026-07: **AUDIO ANTI-REPETITION.** Anything heard constantly now
+  varies three ways: (1) random VARIANT from a numbered set —
+  2 calm bleats, 3 panic bleats, 3 growls; (2) a per-ANIMAL VOICE, a
+  fixed pitch offset assigned at spawn, so three sheep sound like three
+  animals rather than one file three times; (3) a small random pitch
+  wobble on every play. Panic bleats also rise in pitch and get more
+  frequent the closer the nearest wolf is (x1.05 at 250px up to x1.19
+  when it's on top of them). Growls space out as the pack grows, or
+  eight wolves would be a constant drone.
 - 2026-07: Sheep uses a SINGLE idle and walk strip (no up/down variants),
   mirrored for left. Designer's call after drawing it — a sheep reads fine
   side-on from any angle.
